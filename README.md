@@ -41,8 +41,11 @@ unless your `JAVA_HOME` points to a working JDK. Run `just` to list everything.
 | `just test` | Run all tests (logic, Google API client, rollback, simulated mouse drags) |
 | `just test-one MouseDragTest` | Run tests whose name matches |
 | `just screenshots` | Render each view to PNG in `shared/build/screenshots/` |
-| `just mac-demo` | Run the Mac app with demo data (no Google setup needed) |
-| `just mac` | Run the Mac app |
+| `just mac` | Build `Calendar.app` and open it (named and iconed properly in the Dock and Cmd+Tab) |
+| `just mac-demo` | Same, with demo data switched on (no Google setup needed) |
+| `just mac-app` | Only build `desktopApp/build/mac/Calendar.app`; drag it to Applications to keep it |
+| `just mac-dev` | Run straight from Gradle (quicker, but shows as "java" in Cmd+Tab) |
+| `just icons` | Regenerate the Mac icon from `design/icon.svg` |
 | `just android` | Build, install and open on the connected phone (USB debugging on) |
 | `just android-demo` | Same, with demo data switched on |
 | `just devices` | List connected phones/emulators; pass a serial to pick one: `just android <serial>` |

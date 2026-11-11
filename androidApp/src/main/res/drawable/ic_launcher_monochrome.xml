@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Themed (monochrome) launcher icon. Generated from design/icon.svg; content scaled to 85% so it stays inside circular masks. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <group android:pivotX="54" android:pivotY="54" android:scaleX="0.85" android:scaleY="0.85">
+        <path android:fillColor="#000000" android:pathData="M28.49,40.89 H79.51 A2.10,2.10 0 0 1 81.61,42.99 V48.58 A2.10,2.10 0 0 1 79.51,50.68 H28.49 A2.10,2.10 0 0 1 26.39,48.58 V42.99 A2.10,2.10 0 0 1 28.49,40.89 Z" />
+        <path android:fillColor="#000000" android:pathData="M26.83,54.17 H81.17 A0.44,0.44 0 0 1 81.61,54.61 V54.61 A0.44,0.44 0 0 1 81.17,55.05 H26.83 A0.44,0.44 0 0 1 26.39,54.61 V54.61 A0.44,0.44 0 0 1 26.83,54.17 Z" />
+        <path android:fillColor="#000000" android:pathData="M24.99,54.61 a1.75,1.75 0 1 0 3.50,0 a1.75,1.75 0 1 0 -3.50,0 Z" />
+        <path android:fillColor="#000000" android:pathData="M28.49,58.72 H55.40 A2.10,2.10 0 0 1 57.50,60.82 V79.51 A2.10,2.10 0 0 1 55.40,81.61 H28.49 A2.10,2.10 0 0 1 26.39,79.51 V60.82 A2.10,2.10 0 0 1 28.49,58.72 Z" />
+        <path android:fillColor="#000000" android:pathData="M62.04,58.72 H79.51 A2.10,2.10 0 0 1 81.61,60.82 V69.73 A2.10,2.10 0 0 1 79.51,71.83 H62.04 A2.10,2.10 0 0 1 59.94,69.73 V60.82 A2.10,2.10 0 0 1 62.04,58.72 Z" />
+    </group>
+</vector>

@@ -26,13 +26,21 @@ screenshots:
     ./gradlew :shared:jvmTest --tests "app.calendar.ScreenshotTest" --rerun
     @echo "Screenshots: shared/build/screenshots/"
 
-# Run the Mac app
-mac:
+# Build Calendar.app (named and iconed properly in the Dock / Cmd+Tab) and open it
+mac: mac-app
+    open desktopApp/build/mac/Calendar.app
+
+# Build desktopApp/build/mac/Calendar.app; drag it to /Applications to keep it
+mac-app:
+    ./gradlew :desktopApp:macApp
+
+# Run the Mac app straight from Gradle (shows as "java" in Cmd+Tab)
+mac-dev:
     ./gradlew :desktopApp:run
 
 # Run the Mac app with demo data switched on
-mac-demo:
-    ./gradlew :desktopApp:run --args=--demo
+mac-demo: mac-app
+    open desktopApp/build/mac/Calendar.app --args --demo
 
 # Build a Mac .dmg (needs a full JDK with jpackage, e.g. JAVA_HOME=... just dmg)
 dmg:
@@ -62,11 +70,19 @@ android-demo serial="":
 
 # Show Android app logs (crashes and sign-in errors)
 logs serial="":
-    {{adb}} {{ if serial == "" { "" } else { "-s " + serial } }} logcat -v brief "*:W" | grep --line-buffered -iE "app.calendar|AndroidRuntime|Auth|GoogleApi"
+    {{adb}} {{ if serial == "" { "" } else { "-s " + serial } }} logcat -v brief "*:W" "System.out:I" | grep --line-buffered -iE "\[calendar\]|app.calendar|AndroidRuntime|Auth|GoogleApi"
 
 # Print the debug signing SHA-1 for the Android OAuth client in Google Cloud
 sha1:
     "$JAVA_HOME/bin/keytool" -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android -keypass android | grep SHA1
+
+# Regenerate the Mac/desktop icon (.icns + window PNG) from design/icon.svg
+icons:
+    ./gradlew :shared:jvmTest --tests "app.calendar.IconExportTest" --rerun
+    mkdir -p desktopApp/icons desktopApp/src/main/resources
+    iconutil -c icns shared/build/icon/Calendar.iconset -o desktopApp/icons/Calendar.icns
+    cp shared/build/icon/icon-512.png desktopApp/src/main/resources/icon.png
+    @echo "Updated desktopApp/icons/Calendar.icns and desktopApp/src/main/resources/icon.png"
 
 # Delete build outputs
 clean:

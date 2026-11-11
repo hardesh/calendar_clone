@@ -497,6 +497,8 @@ class CalendarController(
     }
 
     fun toast(message: String) {
+        // Also goes to stdout (Mac terminal) and logcat (Android, tag System.out) for diagnosis.
+        println("[calendar] $message")
         toasts += Toast(nextToastId++, message)
         if (toasts.size > 3) toasts.removeAt(0)
     }

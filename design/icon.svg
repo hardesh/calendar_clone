@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  App icon source (1024×1024, macOS icon grid: 824×824 tile at 100,100).
+  A calendar tile with a red header, three event blocks in the app's own style
+  (tinted fill + coloured left bar) and the red "now" line.
+  Regenerate the Mac/desktop PNGs and .icns with `just icons`.
+  The Android launcher icon (androidApp/src/main/res/drawable/ic_launcher_*.xml) mirrors this by hand.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- soft shadow -->
+  <rect x="100" y="118" width="824" height="824" rx="186" fill="#000000" fill-opacity="0.10"/>
+  <rect x="100" y="110" width="824" height="824" rx="186" fill="#000000" fill-opacity="0.08"/>
+  <!-- tile -->
+  <rect x="100" y="100" width="824" height="824" rx="186" fill="#FFFFFF" stroke="#000000" stroke-opacity="0.07" stroke-width="3"/>
+  <!-- red header, clipped to the tile's rounded top -->
+  <path d="M286,100 H738 A186,186 0 0 1 924,286 V300 H100 V286 A186,186 0 0 1 286,100 Z" fill="#EB5757"/>
+  <!-- header details: two date "pills" -->
+  <rect x="200" y="182" width="150" height="36" rx="18" fill="#FFFFFF" fill-opacity="0.92"/>
+  <rect x="374" y="182" width="90" height="36" rx="18" fill="#FFFFFF" fill-opacity="0.55"/>
+
+  <!-- event A: blue, full width -->
+  <rect x="196" y="362" width="632" height="112" rx="24" fill="#DCE9FC"/>
+  <rect x="196" y="362" width="24" height="112" rx="12" fill="#2F80ED"/>
+  <rect x="252" y="398" width="250" height="26" rx="13" fill="#2F80ED" fill-opacity="0.55"/>
+
+  <!-- now line -->
+  <rect x="196" y="514" width="632" height="10" rx="5" fill="#EB5757"/>
+  <circle cx="200" cy="519" r="20" fill="#EB5757"/>
+
+  <!-- event B: green, tall -->
+  <rect x="196" y="566" width="356" height="262" rx="24" fill="#D9F2E2"/>
+  <rect x="196" y="566" width="24" height="262" rx="12" fill="#27AE60"/>
+  <rect x="252" y="602" width="200" height="26" rx="13" fill="#27AE60" fill-opacity="0.6"/>
+  <rect x="252" y="646" width="130" height="22" rx="11" fill="#27AE60" fill-opacity="0.35"/>
+
+  <!-- event C: orange, short -->
+  <rect x="580" y="566" width="248" height="150" rx="24" fill="#FCE8D7"/>
+  <rect x="580" y="566" width="24" height="150" rx="12" fill="#F2994A"/>
+  <rect x="636" y="602" width="140" height="26" rx="13" fill="#F2994A" fill-opacity="0.65"/>
+</svg>
