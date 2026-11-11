@@ -29,48 +29,39 @@ TODO.md        features deferred for later
 
 ## Tooling
 
-This machine has Android Studio, which brings the Java runtime and Android SDK. On the command
-line, point `JAVA_HOME` at Android Studio's bundled Java first:
-
-```bash
-export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
-```
+Android Studio provides the Java runtime and Android SDK. Common tasks are in the `justfile`
+(install `just` with `brew install just`); it uses Android Studio's bundled Java automatically
+unless your `JAVA_HOME` points to a working JDK. Run `just` to list everything.
 
 ## Run it
 
-Mac, with demo data (no Google setup needed):
+| Command | What it does |
+|---|---|
+| `just build` | Build the shared code, Mac app and Android APK |
+| `just test` | Run all tests (logic, Google API client, rollback, simulated mouse drags) |
+| `just test-one MouseDragTest` | Run tests whose name matches |
+| `just screenshots` | Render each view to PNG in `shared/build/screenshots/` |
+| `just mac-demo` | Run the Mac app with demo data (no Google setup needed) |
+| `just mac` | Run the Mac app |
+| `just android` | Build, install and open on the connected phone (USB debugging on) |
+| `just android-demo` | Same, with demo data switched on |
+| `just devices` | List connected phones/emulators; pass a serial to pick one: `just android <serial>` |
+| `just logs` | Android warnings and errors from the app and Google sign-in |
+| `just sha1` | Print the debug signing SHA-1 for the Android OAuth client |
+| `just apk` | Build the Android debug APK only |
+| `just dmg` | Build a Mac `.dmg` (see below) |
+| `just clean` | Delete build outputs |
+
+The `.dmg` lands in `desktopApp/build/compose/binaries/main/dmg/`. It needs a full JDK 21+ with
+`jpackage`, which Android Studio's bundled Java doesn't include. For example:
 
 ```bash
-./gradlew :desktopApp:run --args=--demo
+brew install openjdk@21
 ```
-
-Mac, normally (after the Google setup below):
 
 ```bash
-./gradlew :desktopApp:run
+JAVA_HOME="$(brew --prefix openjdk@21)/libexec/openjdk.jdk/Contents/Home" just dmg
 ```
-
-Build a Mac `.dmg` (lands in `desktopApp/build/compose/binaries/main/dmg/`). This needs a full
-JDK 21+ with `jpackage`; Android Studio's bundled Java doesn't include it. For example, install
-one with `brew install openjdk@21` and point `JAVA_HOME` at it for this command:
-
-```bash
-JAVA_HOME="$(brew --prefix openjdk@21)/libexec/openjdk.jdk/Contents/Home" ./gradlew :desktopApp:packageDmg
-```
-
-Android: turn on Developer options → USB debugging on the phone, plug it in, then:
-
-```bash
-./gradlew :androidApp:installDebug
-```
-
-Tests (logic, Google API client, rollback on failure, simulated mouse drags):
-
-```bash
-./gradlew :shared:jvmTest
-```
-
-`ScreenshotTest` also writes PNG renders of each view to `shared/build/screenshots/`.
 
 ### Keyboard shortcuts (Mac)
 
@@ -106,7 +97,7 @@ list can sign in.
      with the app. Refresh tokens are what matter, and those go in the macOS Keychain.)
    - **Android**. Package name `app.calendar`, and the SHA-1 of your debug signing key:
      ```bash
-     "$JAVA_HOME/bin/keytool" -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android -keypass android | grep SHA1
+     just sha1
      ```
      Release builds are signed with the same debug key, so this one client covers both.
      No client ID goes into the Android app; Google matches it by package name and SHA-1.
