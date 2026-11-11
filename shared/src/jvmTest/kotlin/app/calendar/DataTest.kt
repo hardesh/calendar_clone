@@ -214,3 +214,72 @@ class ControllerTest {
         assertEquals(ZoneEntry("Asia/Tokyo", "Tokyo"), AppSettings(store).zones.first())
     }
 }
+
+/** A stand-in for a connected Google account, for controller tests. */
+private class FakeGoogle(zone: TimeZone) : app.calendar.data.CalendarProvider {
+    override val id = "google"
+    val account = app.calendar.model.Account("me@example.com", "me@example.com", provider = "google")
+    private val cal = CalendarInfo(account.id, "primary", "Me", 0xFF0000FFL, readOnly = false, primary = true)
+    private val start = LocalDateTime(2026, 11, 11, 15, 0).toInstant(zone)
+    val event = CalEvent(account.id, "primary", "g1", "Real meeting", EventTiming.Timed(start, start + 1.hours))
+    override fun accounts() = listOf(account)
+    override suspend fun addAccount() = account
+    override suspend fun removeAccount(account: app.calendar.model.Account) {}
+    override suspend fun calendars(account: app.calendar.model.Account): List<CalendarInfo> { kotlinx.coroutines.delay(300); return listOf(cal) }
+    override suspend fun events(calendar: CalendarInfo, from: Instant, to: Instant): List<CalEvent> { kotlinx.coroutines.delay(500); return listOf(event) }
+    override suspend fun create(calendar: CalendarInfo, fields: EventFields) = error("unused")
+    override suspend fun update(original: CalEvent, fields: EventFields) = error("unused")
+    override suspend fun moveToCalendar(event: CalEvent, target: CalendarInfo) = error("unused")
+    override suspend fun delete(event: CalEvent) {}
+}
+
+class DemoToggleTest {
+    private val zone = TimeZone.of("Asia/Kolkata")
+    private val now = LocalDateTime(2026, 11, 11, 10, 0).toInstant(zone)
+    private val day = LocalDate(2026, 11, 11)
+
+    private fun controller(demo: Boolean, scope: CoroutineScope): CalendarController {
+        val settings = AppSettings(InMemoryStore()).apply {
+            zones = listOf(ZoneEntry("Asia/Kolkata"))
+            demoEnabled = demo
+        }
+        return CalendarController(
+            listOf(FakeGoogle(zone), DemoProvider({ zone }, latencyMs = 150)),
+            settings, scope, clock = { now },
+        )
+    }
+
+    private fun CalendarController.titles() = eventsBetween(day, LocalDate(2026, 11, 12)).map { it.title }
+
+    @Test
+    fun googleEventsShowWithDemoOff() = kotlinx.coroutines.test.runTest {
+        val scope = CoroutineScope(coroutineContext + kotlinx.coroutines.SupervisorJob())
+        val c = controller(demo = false, scope)
+        c.start()
+        testScheduler.advanceTimeBy(5_000)
+        assertTrue("Real meeting" in c.titles(), c.titles().toString())
+        assertTrue("Standup" !in c.titles())
+        scope.coroutineContext[kotlinx.coroutines.Job]!!.cancel()
+    }
+
+    @Test
+    fun turningDemoOffKeepsGoogleEvents() = kotlinx.coroutines.test.runTest {
+        val scope = CoroutineScope(coroutineContext + kotlinx.coroutines.SupervisorJob())
+        val c = controller(demo = true, scope)
+        c.start()
+        testScheduler.advanceTimeBy(5_000)
+        assertTrue("Real meeting" in c.titles() && "Standup" in c.titles(), c.titles().toString())
+        c.changeDemoEnabled(false)
+        testScheduler.advanceTimeBy(5_000)
+        assertTrue("Real meeting" in c.titles(), c.titles().toString())
+        assertTrue("Standup" !in c.titles())
+        // And back on, then off again quickly (before loads finish).
+        c.changeDemoEnabled(true)
+        testScheduler.advanceTimeBy(100)
+        c.changeDemoEnabled(false)
+        testScheduler.advanceTimeBy(5_000)
+        assertTrue("Real meeting" in c.titles(), c.titles().toString())
+        assertTrue("Standup" !in c.titles(), c.titles().toString())
+        scope.coroutineContext[kotlinx.coroutines.Job]!!.cancel()
+    }
+}

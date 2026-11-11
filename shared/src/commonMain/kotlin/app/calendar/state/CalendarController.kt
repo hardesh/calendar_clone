@@ -154,6 +154,7 @@ class CalendarController(
         }
         applyDefaultVisibility(cals)
         calendars = cals
+        println("[calendar] accounts=${list.map { it.provider }} calendars=${cals.size} hidden=${hidden.size} demo=$demoEnabled")
     }
 
     private fun applyDefaultVisibility(cals: List<CalendarInfo>) {
@@ -353,6 +354,8 @@ class CalendarController(
             var list = events
             for ((old, new) in pending.values) list = applyEdit(list, old, new, start)
             windows[start] = list
+            println("[calendar] loaded $start: ${list.size} events from ${cals.size} calendars (${cals.map { it.accountId }.distinct().size} accounts), ${errors.size} errors, demo=$demoEnabled")
+            errors.forEach { println("[calendar] load error: $it") }
             if (showErrors && errors.isNotEmpty()) toast("Couldn't load ${errors.first()}")
         } finally {
             loadingCount--

@@ -1,6 +1,6 @@
 # Calendar
 
-A personal calendar in the style of Notion Calendar, for **macOS** and **Android**, built with
+A personal calendar in the style of Notion Calendar, for **macOS**, **Linux** and **Android**, built with
 Kotlin Multiplatform and Compose Multiplatform. It connects directly to one or more Google
 accounts. There is no server: each device signs in to Google itself.
 
@@ -14,24 +14,41 @@ accounts. There is no server: each device signs in to Google itself.
   the event moves back and a message says why.
 - Demo data (sidebar → Settings → Demo data) lets you try everything without a Google account.
 
+## Download
+
+Ready-made builds are on the [Releases page](https://github.com/hardesh/calendar_clone/releases):
+
+| File | For | Install |
+|---|---|---|
+| `Calendar-macos-arm64.dmg` | Macs with Apple silicon (M1 and later) | Open it and drag Calendar to Applications. It isn't notarised, so the first time, right-click Calendar → **Open** → **Open** (or run `xattr -dr com.apple.quarantine /Applications/Calendar.app`). |
+| `Calendar-linux-amd64.deb` | Ubuntu, Debian and similar on Intel/AMD | `sudo apt install ./Calendar-linux-amd64.deb`, then start "Calendar" from the app menu (or `/opt/calendar-app/bin/Calendar`). |
+| `Calendar-android.apk` | Android 8.0+ | Open it on the phone and allow installing from your browser/files app, or `adb install Calendar-android.apk`. |
+
+The Mac and Linux builds come with this project's Google client built in, so sign-in works as
+long as your Google address is allowed in that project (see "Google setup"). To use **your own**
+Google Cloud project instead, see [Using your own Google client](#using-your-own-google-client).
+
 ## Project layout
 
 ```
 shared/        All UI, drag logic, Google Calendar client and state (Kotlin Multiplatform)
   src/commonMain   shared code
   src/androidMain  Android sign-in (Google Play services), storage
-  src/jvmMain      Mac sign-in (browser + Keychain), storage
+  src/jvmMain      Mac/Linux sign-in (browser + Keychain/keyring), storage
   src/jvmTest      unit tests, simulated mouse-drag tests, screenshot renders
 androidApp/    Android app shell (MainActivity, manifest, icon)
-desktopApp/    Mac app entry point
+desktopApp/    Mac/Linux app entry point, icons, packaging
+design/        icon source (icon.svg)
+scripts/       build-deb-in-docker.sh (Linux package from any Docker host)
 TODO.md        features deferred for later
 ```
 
 ## Tooling
 
 Android Studio provides the Java runtime and Android SDK. Common tasks are in the `justfile`
-(install `just` with `brew install just`); it uses Android Studio's bundled Java automatically
-unless your `JAVA_HOME` points to a working JDK. Run `just` to list everything.
+(install `just` with `brew install just`, or your Linux package manager). It uses your `JAVA_HOME`
+if that works, otherwise Android Studio's bundled Java, otherwise `java` on your PATH. Run `just`
+to list everything; Mac-only and Linux-only recipes only appear on that system.
 
 ## Run it
 
@@ -52,19 +69,31 @@ unless your `JAVA_HOME` points to a working JDK. Run `just` to list everything.
 | `just logs` | Android warnings and errors from the app and Google sign-in |
 | `just sha1` | Print the debug signing SHA-1 for the Android OAuth client |
 | `just apk` | Build the Android debug APK only |
-| `just dmg` | Build a Mac `.dmg` (see below) |
+| `just dmg` | Build a Mac `.dmg` (macOS; see below) |
+| `just linux` / `just linux-demo` | Run the app on Linux |
+| `just deb` / `just rpm` | Build a Linux package on Linux (see below) |
+| `just deb-docker` | Build the Linux amd64 `.deb` in Docker, from a Mac or anywhere |
+| `just dist` | Build all release files into `dist/` (macOS + Docker) |
 | `just clean` | Delete build outputs |
 
-The `.dmg` lands in `desktopApp/build/compose/binaries/main/dmg/`. It needs a full JDK 21+ with
-`jpackage`, which Android Studio's bundled Java doesn't include. For example:
+**Packaging** (`dmg`, `deb`, `rpm`) needs a full JDK 21+ with `jpackage`; Android Studio's
+bundled Java doesn't include it. The justfile finds Homebrew's automatically, or set
+`PACKAGE_JAVA_HOME`:
 
-```bash
-brew install openjdk@21
-```
+- macOS: `brew install openjdk@21`
+- Ubuntu/Debian: `sudo apt install openjdk-21-jdk fakeroot` (and `rpm` for `.rpm`)
+- From a Mac without Linux: `brew install colima docker && colima start --vm-type vz --vz-rosetta`,
+  then `just deb-docker`.
 
-```bash
-JAVA_HOME="$(brew --prefix openjdk@21)/libexec/openjdk.jdk/Contents/Home" just dmg
-```
+Packages are built for the CPU of the machine (or container) building them. `just dist` makes an
+Apple-silicon `.dmg` and an amd64 `.deb`.
+
+### Linux notes
+
+- Settings live in `~/.config/calendar-app/`. Google refresh tokens go in your desktop keyring
+  through `secret-tool` (install `libsecret-tools`); without a keyring they go in a file there
+  that only your user can read.
+- Sign-in opens your default browser (`xdg-open`).
 
 ### Keyboard shortcuts (Mac)
 
@@ -97,7 +126,8 @@ list can sign in.
      google.desktop.clientSecret=GOCSPX-...
      ```
      (For an installed desktop app this "secret" is not truly secret; Google expects it to ship
-     with the app. Refresh tokens are what matter, and those go in the macOS Keychain.)
+     with the app. Refresh tokens are what matter, and those go in the Keychain or keyring.)
+     Builds made from this checkout (`just mac`, `just dmg`, `just deb`) include this client.
    - **Android**. Package name `app.calendar`, and the SHA-1 of your debug signing key:
      ```bash
      just sha1
@@ -111,11 +141,33 @@ to reconnect weekly. To avoid that, set the app to **In production** under Audie
 use you don't need Google's verification; you'll just click past an "unverified app" warning when
 signing in. Android is not affected the same way, because Play services manages its tokens.
 
+## Using your own Google client
+
+The released Mac and Linux builds include this project's Google client. To make a downloaded
+build use your own Google Cloud project instead (for example if you're not on its test-user list):
+
+1. Do steps 1–5 of "Google setup" above in your own Google account; you only need the
+   **Desktop app** client.
+2. Create a file named `google-oauth.properties` with your client:
+   ```properties
+   clientId=1234-abc.apps.googleusercontent.com
+   clientSecret=GOCSPX-...
+   ```
+3. Put it in the app's settings folder and restart Calendar:
+   - macOS: `~/Library/Application Support/CalendarApp/google-oauth.properties`
+   - Linux: `~/.config/calendar-app/google-oauth.properties`
+
+The app uses, in order: that file, the `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` environment
+variables, then the built-in client. The Android app can't be pointed at another project after it
+is built: it is matched to Google by package name and signing key, so build it yourself with your
+own Android client.
+
 ## How sign-in works
 
-- **Mac**: the app opens Google's sign-in page in your browser (OAuth with PKCE), receives the
-  answer on a one-time `127.0.0.1` listener, and stores the refresh token in the macOS Keychain
-  (service "CalendarApp Google"). Settings live in `~/Library/Application Support/CalendarApp/`.
+- **Mac and Linux**: the app opens Google's sign-in page in your browser (OAuth with PKCE),
+  receives the answer on a one-time `127.0.0.1` listener, and stores the refresh token in the
+  macOS Keychain (service "CalendarApp Google") or the Linux keyring. Settings live in
+  `~/Library/Application Support/CalendarApp/` or `~/.config/calendar-app/`.
 - **Android**: the system account picker chooses which Google account on the phone to add, then
   Google Play services grants calendar access and supplies tokens. The app stores only the list of
   connected emails (in SharedPreferences, where a home-screen widget can read it later).

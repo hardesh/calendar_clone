@@ -96,6 +96,42 @@ class MacKeychain(private val service: String = "CalendarApp Google") : SecretSt
     private fun quote(s: String) = "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 }
 
+/**
+ * Linux desktop keyring (GNOME Keyring, KWallet via the Secret Service API) through
+ * `secret-tool` from libsecret-tools. The secret is passed on stdin, never as an argument.
+ */
+class LinuxSecretTool(private val service: String = "calendar-app-google") : SecretStore {
+    override fun get(account: String): String? {
+        val p = ProcessBuilder("secret-tool", "lookup", "service", service, "account", account)
+            .redirectError(ProcessBuilder.Redirect.DISCARD).start()
+        val out = p.inputStream.bufferedReader().readText().trim()
+        return if (p.waitFor(10, TimeUnit.SECONDS) && p.exitValue() == 0 && out.isNotEmpty()) out else null
+    }
+
+    override fun put(account: String, secret: String) {
+        val p = ProcessBuilder("secret-tool", "store", "--label=Calendar: $account", "service", service, "account", account)
+            .redirectErrorStream(true).start()
+        p.outputStream.bufferedWriter().use { it.write(secret) }
+        val msg = p.inputStream.bufferedReader().readText()
+        check(p.waitFor(30, TimeUnit.SECONDS) && p.exitValue() == 0) { "Couldn't save the Google sign-in to the keyring: ${msg.trim()}" }
+    }
+
+    override fun delete(account: String) {
+        ProcessBuilder("secret-tool", "clear", "service", service, "account", account)
+            .redirectErrorStream(true).start().apply { inputStream.readAllBytes(); waitFor(10, TimeUnit.SECONDS) }
+    }
+
+    companion object {
+        /** True when secret-tool is installed and a keyring answers (a lookup of a missing item exits 1, not 127). */
+        fun available(): Boolean = runCatching {
+            val p = ProcessBuilder("secret-tool", "lookup", "service", "calendar-app-probe")
+                .redirectErrorStream(true).start()
+            p.inputStream.readAllBytes()
+            p.waitFor(10, TimeUnit.SECONDS) && p.exitValue() in 0..1 && System.getenv("DBUS_SESSION_BUS_ADDRESS") != null
+        }.getOrDefault(false)
+    }
+}
+
 class FileSecretStore(private val file: File) : SecretStore {
     private val store by lazy {
         if (!file.exists()) {
@@ -288,10 +324,26 @@ class DesktopGoogleAuth(
 
 fun desktopPlatform(args: Array<String>): PlatformServices {
     val dir = desktopDataDir()
-    val isMac = System.getProperty("os.name").lowercase().contains("mac")
-    val secrets: SecretStore = if (isMac) MacKeychain() else FileSecretStore(File(dir, "secrets.json"))
-    val clientId = System.getProperty("google.clientId") ?: System.getenv("GOOGLE_CLIENT_ID")
-    val clientSecret = System.getProperty("google.clientSecret") ?: System.getenv("GOOGLE_CLIENT_SECRET")
+    val os = System.getProperty("os.name").lowercase()
+    val secrets: SecretStore = when {
+        os.contains("mac") -> MacKeychain()
+        os.contains("linux") && LinuxSecretTool.available() -> LinuxSecretTool()
+        // No keyring (e.g. a bare window manager): a file only this user can read.
+        else -> FileSecretStore(File(dir, "secrets.json"))
+    }
+    // Google client, first match wins: google-oauth.properties in the data folder (lets anyone
+    // use their own Google Cloud project with a downloaded build), environment variables,
+    // then the client built in from local.properties.
+    val fileProps = java.util.Properties().apply {
+        val f = File(dir, "google-oauth.properties")
+        if (f.exists()) f.inputStream().use { load(it) }
+    }
+    val clientId = fileProps.getProperty("clientId")?.trim()?.ifEmpty { null }
+        ?: System.getenv("GOOGLE_CLIENT_ID")
+        ?: System.getProperty("google.clientId")
+    val clientSecret = fileProps.getProperty("clientSecret")?.trim()?.ifEmpty { null }
+        ?: System.getenv("GOOGLE_CLIENT_SECRET")
+        ?: System.getProperty("google.clientSecret")
     return PlatformServices(
         store = FileStore(File(dir, "settings.json")),
         googleAuth = DesktopGoogleAuth(clientId, clientSecret, secrets),

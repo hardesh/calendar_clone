@@ -38,12 +38,28 @@ compose.desktop {
         mainClass = "app.calendar.desktop.MainKt"
         jvmArgs += oauthJvmArgs
         // Name shown in the Dock and Cmd+Tab when running from Gradle (otherwise "java").
-        jvmArgs += listOf("-Xdock:name=Calendar", "-Dapple.awt.application.name=Calendar")
+        // -Xdock:* is a macOS-only JVM option and stops Java from starting elsewhere; packages are
+        // always built on the OS they target, so the build machine's OS decides.
+        if (System.getProperty("os.name").lowercase().contains("mac")) {
+            jvmArgs += listOf("-Xdock:name=Calendar", "-Dapple.awt.application.name=Calendar")
+        }
+        // Lets main() set the Linux WM_CLASS so docks show the app's name and icon.
+        jvmArgs += "--add-opens=java.desktop/sun.awt.X11=ALL-UNNAMED"
         nativeDistributions {
-            targetFormats(TargetFormat.Dmg)
+            targetFormats(TargetFormat.Dmg, TargetFormat.Deb, TargetFormat.Rpm)
             packageName = "Calendar"
             packageVersion = "1.0.0"
             modules("jdk.httpserver", "java.net.http")
+            description = "Calendar for Google accounts, in the style of Notion Calendar"
+            vendor = "Calendar"
+            linux {
+                packageName = "calendar-app"
+                debMaintainer = "calendar-app@users.noreply.github.com"
+                menuGroup = "Office"
+                appCategory = "Office"
+                shortcut = true
+                iconFile.set(project.file("icons/Calendar.png"))
+            }
             macOS {
                 bundleID = "app.calendar.desktop"
                 iconFile.set(project.file("icons/Calendar.icns"))
