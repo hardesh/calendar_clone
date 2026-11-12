@@ -12,6 +12,10 @@ accounts. There is no server: each device signs in to Google itself.
   remove them in the sidebar.
 - Edits appear immediately and are saved to Google in the background. If Google rejects a change,
   the event moves back and a message says why.
+- **Opens instantly and works offline**: the last-known calendars and events are saved on each
+  device, shown at start and refreshed from Google in the background. Without a connection you
+  can still browse the months you've seen ("Offline" appears next to the title); it reconnects on
+  its own. Edits need a connection for now.
 - Demo data (sidebar → Settings → Demo data) lets you try everything without a Google account.
 
 ## Download
@@ -173,6 +177,9 @@ own Android client.
   connected emails (in SharedPreferences, where a home-screen widget can read it later).
 
 ## Notes
+
+- Saved events live in the app's data folder (`cache/` on Mac/Linux, app storage on Android) and
+  are cleared when you disconnect an account. Demo data is never saved.
 
 - Dragging one occurrence of a repeating event changes only that occurrence.
 - Calendars you can only view are shown but can't be dragged or edited.

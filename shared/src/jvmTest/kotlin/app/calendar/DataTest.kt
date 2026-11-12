@@ -217,6 +217,8 @@ class ControllerTest {
 
 /** A stand-in for a connected Google account, for controller tests. */
 private class FakeGoogle(zone: TimeZone) : app.calendar.data.CalendarProvider {
+    /** When set, every network call fails with this (e.g. to simulate being offline). */
+    var failWith: Exception? = null
     override val id = "google"
     val account = app.calendar.model.Account("me@example.com", "me@example.com", provider = "google")
     private val cal = CalendarInfo(account.id, "primary", "Me", 0xFF0000FFL, readOnly = false, primary = true)
@@ -225,8 +227,8 @@ private class FakeGoogle(zone: TimeZone) : app.calendar.data.CalendarProvider {
     override fun accounts() = listOf(account)
     override suspend fun addAccount() = account
     override suspend fun removeAccount(account: app.calendar.model.Account) {}
-    override suspend fun calendars(account: app.calendar.model.Account): List<CalendarInfo> { kotlinx.coroutines.delay(300); return listOf(cal) }
-    override suspend fun events(calendar: CalendarInfo, from: Instant, to: Instant): List<CalEvent> { kotlinx.coroutines.delay(500); return listOf(event) }
+    override suspend fun calendars(account: app.calendar.model.Account): List<CalendarInfo> { kotlinx.coroutines.delay(300); failWith?.let { throw it }; return listOf(cal) }
+    override suspend fun events(calendar: CalendarInfo, from: Instant, to: Instant): List<CalEvent> { kotlinx.coroutines.delay(500); failWith?.let { throw it }; return listOf(event) }
     override suspend fun create(calendar: CalendarInfo, fields: EventFields) = error("unused")
     override suspend fun update(original: CalEvent, fields: EventFields) = error("unused")
     override suspend fun moveToCalendar(event: CalEvent, target: CalendarInfo) = error("unused")
@@ -280,6 +282,87 @@ class DemoToggleTest {
         testScheduler.advanceTimeBy(5_000)
         assertTrue("Real meeting" in c.titles(), c.titles().toString())
         assertTrue("Standup" !in c.titles(), c.titles().toString())
+        scope.coroutineContext[kotlinx.coroutines.Job]!!.cancel()
+    }
+}
+
+class CacheTest {
+    private val zone = TimeZone.of("Asia/Kolkata")
+    private val now = LocalDateTime(2026, 11, 11, 10, 0).toInstant(zone)
+    private val day = LocalDate(2026, 11, 11)
+
+    private fun controller(google: FakeGoogle, files: app.calendar.data.FileCache, scope: CoroutineScope) =
+        CalendarController(
+            listOf(google, DemoProvider({ zone }, latencyMs = 150)),
+            AppSettings(InMemoryStore()).apply { zones = listOf(ZoneEntry("Asia/Kolkata")) },
+            scope, cache = app.calendar.data.EventCache(files), clock = { now },
+        )
+
+    private fun CalendarController.titles() = eventsBetween(day, LocalDate(2026, 11, 12)).map { it.title }
+
+    @Test
+    fun roundTrip() {
+        val cache = app.calendar.data.EventCache(app.calendar.data.InMemoryFileCache())
+        val g = FakeGoogle(zone)
+        val allDay = CalEvent(g.account.id, "primary", "a1", "Holiday", EventTiming.AllDay(day, LocalDate(2026, 11, 13)), location = "Home", colorOverride = 0xFF123456L)
+        val demo = CalEvent("demo", "work", "d1", "Demo", EventTiming.AllDay(day, LocalDate(2026, 11, 12)))
+        cache.saveWindow(kotlinx.datetime.DayOfWeek.SUNDAY, LocalDate(2026, 11, 1), listOf(g.event, allDay, demo), now)
+        assertEquals(listOf(g.event, allDay), cache.loadWindow(kotlinx.datetime.DayOfWeek.SUNDAY, LocalDate(2026, 11, 1)))
+        assertNull(cache.loadWindow(kotlinx.datetime.DayOfWeek.MONDAY, LocalDate(2026, 11, 1)))
+    }
+
+    @Test
+    fun showsCachedEventsBeforeNetworkAnswers() = kotlinx.coroutines.test.runTest {
+        val files = app.calendar.data.InMemoryFileCache()
+        val scope1 = CoroutineScope(coroutineContext + kotlinx.coroutines.SupervisorJob())
+        controller(FakeGoogle(zone), files, scope1).also { it.start() }
+        testScheduler.advanceTimeBy(5_000)
+        scope1.coroutineContext[kotlinx.coroutines.Job]!!.cancel()
+
+        // Next launch: cached events are there immediately, before any network call returns.
+        val scope2 = CoroutineScope(coroutineContext + kotlinx.coroutines.SupervisorJob())
+        val c = controller(FakeGoogle(zone), files, scope2)
+        c.start()
+        assertTrue("Real meeting" in c.titles(), c.titles().toString())
+        assertEquals(1, c.calendars.size)
+        scope2.coroutineContext[kotlinx.coroutines.Job]!!.cancel()
+    }
+
+    @Test
+    fun offlineKeepsCachedEventsAndRecovers() = kotlinx.coroutines.test.runTest {
+        val files = app.calendar.data.InMemoryFileCache()
+        val scope1 = CoroutineScope(coroutineContext + kotlinx.coroutines.SupervisorJob())
+        controller(FakeGoogle(zone), files, scope1).also { it.start() }
+        testScheduler.advanceTimeBy(5_000)
+        scope1.coroutineContext[kotlinx.coroutines.Job]!!.cancel()
+
+        val google = FakeGoogle(zone).apply { failWith = java.net.UnknownHostException("www.googleapis.com") }
+        val scope2 = CoroutineScope(coroutineContext + kotlinx.coroutines.SupervisorJob())
+        val c = controller(google, files, scope2)
+        c.start()
+        testScheduler.advanceTimeBy(5_000)
+        assertTrue(c.offline)
+        assertTrue("Real meeting" in c.titles(), c.titles().toString())
+        assertEquals(1, c.calendars.size, "calendars kept while offline")
+        assertTrue(c.toasts.isEmpty(), c.toasts.toString())
+
+        // Connection returns: within the 30 s offline retry the app is back online.
+        google.failWith = null
+        testScheduler.advanceTimeBy(40_000)
+        assertFalse(c.offline)
+        assertTrue("Real meeting" in c.titles())
+        scope2.coroutineContext[kotlinx.coroutines.Job]!!.cancel()
+    }
+
+    @Test
+    fun googleErrorIsNotTreatedAsOffline() = kotlinx.coroutines.test.runTest {
+        val google = FakeGoogle(zone).apply { failWith = app.calendar.data.CalendarApiException(403, "Insufficient Permission") }
+        val scope = CoroutineScope(coroutineContext + kotlinx.coroutines.SupervisorJob())
+        val c = controller(google, app.calendar.data.InMemoryFileCache(), scope)
+        c.start()
+        testScheduler.advanceTimeBy(5_000)
+        assertFalse(c.offline)
+        assertTrue(c.toasts.any { "Insufficient Permission" in it.message }, c.toasts.toString())
         scope.coroutineContext[kotlinx.coroutines.Job]!!.cancel()
     }
 }

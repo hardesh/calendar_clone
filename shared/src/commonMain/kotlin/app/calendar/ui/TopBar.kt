@@ -1,6 +1,9 @@
 package app.calendar.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -37,7 +40,19 @@ fun TopBar(controller: CalendarController, compact: Boolean, onMenu: (() -> Unit
     ) {
         if (onMenu != null) IconBtn(Icons.Default.Menu, "Menu", onMenu, size = 40.dp, tint = colors.text)
         Text(title, style = AppType.title, color = colors.text, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 4.dp))
-        if (controller.loadingCount > 0) {
+        if (controller.offline) {
+            Text(
+                if (compact) "Offline" else "Offline · showing saved events",
+                style = AppType.small,
+                color = colors.textSecondary,
+                maxLines = 1,
+                modifier = Modifier
+                    .padding(start = 10.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(colors.hover)
+                    .padding(horizontal = 8.dp, vertical = 3.dp),
+            )
+        } else if (controller.loadingCount > 0) {
             CircularProgressIndicator(Modifier.padding(start = 10.dp).size(14.dp), strokeWidth = 2.dp, color = colors.textTertiary)
         }
         Spacer(Modifier.weight(1f))

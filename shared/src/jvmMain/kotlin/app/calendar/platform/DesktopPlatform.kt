@@ -347,6 +347,7 @@ fun desktopPlatform(args: Array<String>): PlatformServices {
     return PlatformServices(
         store = FileStore(File(dir, "settings.json")),
         googleAuth = DesktopGoogleAuth(clientId, clientSecret, secrets),
+        cache = DirectoryCache(File(dir, "cache")),
         forceDemo = "--demo" in args,
     )
 }

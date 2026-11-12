@@ -6,12 +6,15 @@ Deferred features, with what the current code already provides for each.
 
 - [ ] **Android home-screen widgets** (Jetpack Glance, e.g. "today" and "next event").
   Provided: connected accounts and settings are in SharedPreferences (`calendar_prefs`);
-  `AndroidGoogleAuth` gets tokens without UI once access is granted; `GoogleCalendarApi` is plain
-  Kotlin. A widget module can reuse both. Will need a small on-device cache of upcoming events.
+  upcoming events are cached as JSON in `filesDir/event-cache/` (`EventCache`); `AndroidGoogleAuth`
+  gets tokens without UI once access is granted. A widget can read the cache directly.
 - [ ] **Other providers** (Outlook/Microsoft 365, iCloud/CalDAV).
   Provided: `CalendarProvider` interface; Google and demo data are two implementations already.
-- [ ] **Offline mode / local database** (show cached events without network, queue edits).
-  Provided: edits already go through one optimistic `mutate()` path in `CalendarController`.
+- [x] **Offline viewing and instant start**: last-known calendars and events are cached per
+  device (`EventCache`) and refreshed in the background.
+- [ ] **Offline edits** (queue drags/edits made offline and send them when back online).
+  Provided: edits go through one optimistic `mutate()` path in `CalendarController`, and the
+  cache already stores the optimistic result.
 - [ ] **Edit all events in a repeating series** (ask "this event / all events" on drag or save).
   Provided: `recurringEventId` is kept on every instance.
 - [ ] **iOS app**.

@@ -55,6 +55,8 @@ object NoGoogleAuth : GoogleAuth {
 class PlatformServices(
     val store: KeyValueStore,
     val googleAuth: GoogleAuth,
+    /** Where last-known calendars and events are kept for instant start and offline use. */
+    val cache: app.calendar.data.FileCache = app.calendar.data.InMemoryFileCache(),
     /** Start with demo data on, e.g. from a `--demo` flag. */
     val forceDemo: Boolean = false,
 )

@@ -7,6 +7,8 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import app.calendar.data.CalendarProvider
+import app.calendar.data.EventCache
+import app.calendar.data.InMemoryFileCache
 import app.calendar.logic.MONTH_GRID_DAYS
 import app.calendar.logic.dateSpan
 import app.calendar.logic.monthGridStart
@@ -38,6 +40,7 @@ import kotlinx.datetime.atStartOfDayIn
 import kotlinx.datetime.toLocalDateTime
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
 data class Toast(val id: Long, val message: String)
@@ -56,6 +59,8 @@ class CalendarController(
     private val providers: List<CalendarProvider>,
     private val settings: AppSettings,
     private val scope: CoroutineScope,
+    /** Last-known calendars and events, for instant start and offline use. */
+    private val cache: EventCache = EventCache(InMemoryFileCache()),
     private val clock: () -> Instant = { Clock.System.now() },
     forceDemo: Boolean = false,
 ) {
@@ -89,7 +94,12 @@ class CalendarController(
     /** Loaded events keyed by the first day of a 6-week window. */
     private val windows = mutableStateMapOf<LocalDate, List<CalEvent>>()
     private val loadingWindows = HashMap<LocalDate, Job>()
+    /** Windows fetched from the providers this session (others may be showing cached data). */
+    private val freshWindows = HashSet<LocalDate>()
     var loadingCount by mutableIntStateOf(0)
+        private set
+    /** True when the last attempt to reach Google failed for network reasons; cached data is shown. */
+    var offline by mutableStateOf(false)
         private set
 
     /** Mutations not yet confirmed by the server; re-applied over freshly loaded windows. */
@@ -125,35 +135,76 @@ class CalendarController(
 
     // ---- lifecycle ---------------------------------------------------------------
     fun start() {
+        // Show what we had last time straight away, then refresh from the network.
+        restoreCalendarsFromCache()
+        restoreCachedWindows()
         scope.launch {
             reloadAccounts()
             ensureLoaded()
             while (true) {
-                delay(5.minutes)
+                // Check back sooner while offline, so data refreshes soon after the connection returns.
+                delay(if (offline) 30.seconds else 5.minutes)
+                if (offline) reloadAccounts()
                 refreshEvents(showErrors = false)
             }
+        }
+    }
+
+    private fun restoreCalendarsFromCache() {
+        val accountIds = activeProviders().flatMap { it.accounts() }.map { it.id }.toSet()
+        if (calendars.isEmpty()) {
+            accounts = activeProviders().flatMap { it.accounts() }
+            calendars = cache.loadCalendars().filter { it.accountId in accountIds }
+        }
+    }
+
+    /** Puts cached events into any on-screen window not yet in memory. */
+    private fun restoreCachedWindows() {
+        for (w in currentWindows()) {
+            if (w in windows) continue
+            val cached = cache.loadWindow(weekStart, w) ?: continue
+            val ids = calendars.map { it.key }.toSet()
+            var list = cached.filter { it.calendarKey in ids }
+            for ((old, new) in pending.values) list = applyEdit(list, old, new, w)
+            windows[w] = list
         }
     }
 
     suspend fun reloadAccounts() {
         val list = activeProviders().flatMap { it.accounts() }
         accounts = list
+        val previous = calendars.ifEmpty { cache.loadCalendars() }
         val cals = ArrayList<CalendarInfo>()
+        var networkFailures = 0
+        var reached = 0
         for (account in list) {
             val provider = providerFor(account.id) ?: continue
             try {
                 cals += provider.calendars(account)
                 accountErrors.remove(account.id)
+                if (provider.id != "demo") reached++
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                accountErrors[account.id] = errorText(e)
-                if (e is ReauthRequiredException) toast("${account.email}: sign in again to keep syncing")
-                else toast("Couldn't load calendars for ${account.email}: ${errorText(e)}")
+                // Keep showing this account's calendars from before (memory or cache).
+                cals += previous.filter { it.accountId == account.id }
+                when {
+                    isNetworkError(e) -> networkFailures++
+                    e is ReauthRequiredException -> {
+                        accountErrors[account.id] = errorText(e)
+                        toast("${account.email}: sign in again to keep syncing")
+                    }
+                    else -> {
+                        accountErrors[account.id] = errorText(e)
+                        toast("Couldn't load calendars for ${account.email}: ${errorText(e)}")
+                    }
+                }
             }
         }
+        if (networkFailures > 0 || reached > 0) offline = networkFailures > 0 && reached == 0
         applyDefaultVisibility(cals)
         calendars = cals
+        if (networkFailures == 0) cache.saveCalendars(cals)
         println("[calendar] accounts=${list.map { it.provider }} calendars=${cals.size} hidden=${hidden.size} demo=$demoEnabled")
     }
 
@@ -175,7 +226,7 @@ class CalendarController(
 
     private suspend fun refreshEvents(showErrors: Boolean) {
         val keep = currentWindows()
-        windows.keys.filter { it !in keep }.forEach { windows.remove(it) }
+        windows.keys.filter { it !in keep }.forEach { windows.remove(it); freshWindows.remove(it) }
         keep.map { start -> scope.async { loadWindow(start, force = true, showErrors = showErrors) } }.awaitAll()
     }
 
@@ -204,14 +255,14 @@ class CalendarController(
     fun changeWeekStart(day: DayOfWeek) {
         weekStart = day
         settings.weekStart = day
-        windows.clear()
+        clearWindows()
         ensureLoaded()
     }
 
     fun changeDemoEnabled(enabled: Boolean) {
         demoEnabled = enabled
         settings.demoEnabled = enabled
-        windows.clear()
+        clearWindows()
         scope.launch {
             reloadAccounts()
             ensureLoaded()
@@ -225,7 +276,7 @@ class CalendarController(
         zones = list
         settings.zones = list
         if (primaryChanged) {
-            windows.clear()
+            clearWindows()
             ensureLoaded()
         }
     }
@@ -302,7 +353,9 @@ class CalendarController(
         scope.launch {
             providerFor(account.id)?.removeAccount(account)
             accountErrors.remove(account.id)
-            windows.clear()
+            cache.clear()
+            clearWindows()
+            calendars = emptyList()
             reloadAccounts()
             ensureLoaded()
         }
@@ -319,16 +372,26 @@ class CalendarController(
         }
     }
 
+    private fun clearWindows() {
+        windows.clear()
+        freshWindows.clear()
+    }
+
+    /**
+     * Makes sure every on-screen window has data: cached events appear immediately,
+     * and any window not yet fetched this session is refreshed in the background.
+     */
     fun ensureLoaded() {
+        restoreCachedWindows()
         for (w in currentWindows()) {
-            if (w !in windows && loadingWindows[w]?.isActive != true) {
+            if (w !in freshWindows && loadingWindows[w]?.isActive != true) {
                 loadingWindows[w] = scope.launch { loadWindow(w, force = false, showErrors = true) }
             }
         }
     }
 
     private suspend fun loadWindow(start: LocalDate, force: Boolean, showErrors: Boolean) {
-        if (!force && start in windows) return
+        if (!force && start in freshWindows) return
         loadingCount++
         try {
             val zone = primaryZone
@@ -336,25 +399,39 @@ class CalendarController(
             val to = start.plusDays(MONTH_GRID_DAYS).atStartOfDayIn(zone)
             val cals = calendars
             val errors = ArrayList<String>()
+            val failed = HashSet<String>()
+            var networkFailures = 0
+            var reached = 0
             val events = coroutineScope {
                 cals.map { cal ->
                     async {
+                        val provider = providerFor(cal.accountId) ?: return@async emptyList()
                         try {
-                            providerFor(cal.accountId)?.events(cal, from, to).orEmpty()
+                            provider.events(cal, from, to).also { if (provider.id != "demo") reached++ }
                         } catch (e: CancellationException) {
                             throw e
                         } catch (e: Exception) {
-                            if (e is ReauthRequiredException) accountErrors[cal.accountId] = errorText(e)
-                            errors += "${cal.name}: ${errorText(e)}"
+                            failed += cal.key
+                            if (isNetworkError(e)) {
+                                networkFailures++
+                            } else {
+                                if (e is ReauthRequiredException) accountErrors[cal.accountId] = errorText(e)
+                                errors += "${cal.name}: ${errorText(e)}"
+                            }
                             emptyList()
                         }
                     }
                 }.awaitAll().flatten()
             }
-            var list = events
+            // For calendars that couldn't be fetched, keep what we had (memory, else cache).
+            val previous = windows[start] ?: cache.loadWindow(weekStart, start).orEmpty()
+            var list = events + previous.filter { it.calendarKey in failed }
             for ((old, new) in pending.values) list = applyEdit(list, old, new, start)
             windows[start] = list
-            println("[calendar] loaded $start: ${list.size} events from ${cals.size} calendars (${cals.map { it.accountId }.distinct().size} accounts), ${errors.size} errors, demo=$demoEnabled")
+            if (failed.isEmpty()) freshWindows += start
+            if (networkFailures > 0 || reached > 0) offline = networkFailures > 0 && reached == 0
+            cache.saveWindow(weekStart, start, list, clock())
+            println("[calendar] loaded $start: ${list.size} events from ${cals.size} calendars, ${failed.size} failed (${networkFailures} network), offline=$offline")
             errors.forEach { println("[calendar] load error: $it") }
             if (showErrors && errors.isNotEmpty()) toast("Couldn't load ${errors.first()}")
         } finally {
@@ -390,7 +467,14 @@ class CalendarController(
     }
 
     private fun applyLocal(old: CalEvent?, new: CalEvent?) {
-        for (k in windows.keys.toList()) windows[k] = applyEdit(windows[k].orEmpty(), old, new, k)
+        for (k in windows.keys.toList()) {
+            val before = windows[k].orEmpty()
+            val after = applyEdit(before, old, new, k)
+            if (after != before) {
+                windows[k] = after
+                cache.saveWindow(weekStart, k, after, clock())
+            }
+        }
     }
 
     /**
@@ -508,6 +592,20 @@ class CalendarController(
 
     fun dismissToast(id: Long) {
         toasts.removeAll { it.id == id }
+    }
+
+    /** Network trouble (no connection, DNS, timeouts) rather than an error from Google. */
+    private fun isNetworkError(e: Throwable): Boolean {
+        var t: Throwable? = e
+        while (t != null) {
+            val name = t::class.simpleName.orEmpty()
+            if (name.contains("IOException") || name.contains("UnknownHost") || name.contains("Connect") ||
+                name.contains("Timeout") || name.contains("UnresolvedAddress") || name.contains("NoRouteToHost") ||
+                t.message == "No network connection"
+            ) return true
+            t = t.cause
+        }
+        return false
     }
 
     private fun errorText(e: Exception): String = e.message?.takeIf { it.isNotBlank() } ?: e::class.simpleName ?: "Unknown error"

@@ -69,7 +69,7 @@ fun createController(platform: PlatformServices, scope: CoroutineScope): Calenda
         add(GoogleProvider(platform.googleAuth, GoogleCalendarApi(http), platform.store))
         add(DemoProvider(zone = { controller.primaryZone }))
     }
-    controller = CalendarController(providers, settings, scope, forceDemo = platform.forceDemo)
+    controller = CalendarController(providers, settings, scope, cache = app.calendar.data.EventCache(platform.cache), forceDemo = platform.forceDemo)
     return controller
 }
 
