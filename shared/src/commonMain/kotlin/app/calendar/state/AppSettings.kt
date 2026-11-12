@@ -10,6 +10,8 @@ import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 
 /** Persisted user preferences. Plain getters/setters over a [KeyValueStore]. */
+const val REMINDERS_FROM_GOOGLE = -1
+
 class AppSettings(private val store: KeyValueStore) {
     private val json = Json { ignoreUnknownKeys = true }
     private val stringList = ListSerializer(String.serializer())
@@ -48,10 +50,15 @@ class AppSettings(private val store: KeyValueStore) {
         get() = store.get("hourHeight")?.toFloatOrNull()
         set(v) = if (v == null) store.remove("hourHeight") else store.put("hourHeight", v.toString())
 
-    /** Minutes before a timed event to notify (phone); 0 = off. */
+    /** Phone notifications: -1 = each event's Google reminders, 0 = off, else minutes before every event. */
     var reminderMinutes: Int
-        get() = store.get("reminderMinutes")?.toIntOrNull() ?: 10
+        get() = store.get("reminderMinutes")?.toIntOrNull() ?: REMINDERS_FROM_GOOGLE
         set(v) = store.put("reminderMinutes", v.toString())
+
+    /** Text size multiplier for the whole app (1 = default). */
+    var textScale: Float
+        get() = store.get("textScale")?.toFloatOrNull() ?: 1f
+        set(v) = store.put("textScale", v.toString())
 
     var defaultCalendar: String?
         get() = store.get("defaultCalendar")

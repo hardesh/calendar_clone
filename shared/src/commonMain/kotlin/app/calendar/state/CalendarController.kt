@@ -25,6 +25,8 @@ import app.calendar.model.EventTiming
 import app.calendar.model.ViewMode
 import app.calendar.model.ZoneEntry
 import app.calendar.model.fields
+import app.calendar.model.fieldsComparedTo
+import app.calendar.model.meetingLink
 import app.calendar.platform.ReauthRequiredException
 import app.calendar.platform.SignInCancelledException
 import kotlinx.coroutines.CancellationException
@@ -328,6 +330,16 @@ class CalendarController(
 
     fun resetZoom() = setZoom(null)
 
+    // ---- text size --------------------------------------------------------------
+    /** Text size for the whole app, independent of the grid zoom. */
+    var textScale by mutableStateOf(settings.textScale)
+        private set
+
+    fun changeTextScale(scale: Float) {
+        textScale = scale
+        settings.textScale = scale
+    }
+
     // ---- time zones ------------------------------------------------------------
     fun updateZones(list: List<ZoneEntry>) {
         if (list.isEmpty()) return
@@ -373,7 +385,11 @@ class CalendarController(
 
     fun colorOf(event: CalEvent): Long = event.colorOverride ?: calendarOf(event)?.color ?: 0xFF9B9B9BL
 
-    fun canEdit(event: CalEvent): Boolean = calendarOf(event)?.readOnly == false
+    /** Whether the event's time and details can be changed (and it can be dragged). */
+    fun canEdit(event: CalEvent): Boolean = calendarOf(event)?.readOnly == false && event.organizerSelf
+
+    /** Whether your own reply, colour and reminders can be changed (also for invitations). */
+    fun canEditPersonal(event: CalEvent): Boolean = calendarOf(event)?.readOnly == false
 
     fun writableCalendars(): List<CalendarInfo> = calendars.filter { !it.readOnly }
 
@@ -450,8 +466,20 @@ class CalendarController(
         return eventsBetween(today.plusDays(-1), today.plusDays(3))
             .filter { it.timing is EventTiming.Timed && it.id != DRAFT_ID }
             .filter { it.endIn(zone) > now - 1.hours && it.startIn(zone) < now + 48.hours }
-            .map { UpcomingEvent(it.key, it.title, it.startIn(zone), it.endIn(zone), colorOf(it), it.location) }
+            .map {
+                UpcomingEvent(
+                    it.key, it.title, it.startIn(zone), it.endIn(zone), colorOf(it), it.location,
+                    reminderMinutes = reminderMinutesFor(it),
+                    conferenceUrl = it.meetingLink()?.url,
+                )
+            }
             .sortedBy { it.start }
+    }
+
+    /** When Google would notify for [event]: its own reminders, or its calendar's defaults. */
+    fun reminderMinutesFor(event: CalEvent): List<Int> {
+        val r = event.reminders
+        return if (r == null || r.useDefault) calendarOf(event)?.defaultReminders.orEmpty() else r.minutes
     }
 
     /** Opens the editor for an event shown in the menu bar or a notification, and shows its day. */
@@ -679,10 +707,10 @@ class CalendarController(
             ?: CalendarInfo(e.accountId, e.calendarId, e.calendarId, 0, readOnly = false, primary = false)
         return when (op.kind) {
             OutboxOp.Kind.CREATE -> provider.create(calendarFor(op.after!!), op.after.fields())
-            OutboxOp.Kind.UPDATE -> provider.update(op.before!!, op.after!!.fields())
+            OutboxOp.Kind.UPDATE -> provider.update(op.before!!, op.after!!.fieldsComparedTo(op.before))
             OutboxOp.Kind.MOVE -> {
                 val moved = provider.moveToCalendar(op.before!!, calendarFor(op.after!!))
-                provider.update(moved, op.after.fields())
+                provider.update(moved, op.after.fieldsComparedTo(op.before))
             }
             OutboxOp.Kind.DELETE -> {
                 provider.delete(op.before!!)
@@ -691,10 +719,22 @@ class CalendarController(
         }
     }
 
-    /** Called when a drag finishes. */
+    /** Called when a drag finishes. Drags never email guests (their calendars still update). */
     fun changeTiming(event: CalEvent, timing: EventTiming) {
         if (timing == event.timing || !canEdit(event)) return
-        enqueue(OutboxOp(newOpId(), OutboxOp.Kind.UPDATE, event, event.copy(timing = timing)))
+        enqueue(OutboxOp(newOpId(), OutboxOp.Kind.UPDATE, event, event.copy(timing = timing, notifyGuests = false)))
+    }
+
+    /** Your reply to an invitation: "accepted", "declined" or "tentative". The organiser is told. */
+    fun respond(event: CalEvent, status: String) {
+        val me = event.selfAttendee ?: return
+        if (me.status == status || !canEditPersonal(event)) return
+        val updated = event.copy(
+            attendees = event.attendees.map { if (it.self) it.copy(status = status) else it },
+            notifyGuests = true,
+        )
+        if (editor?.original?.key == event.key) editor = editor?.copy(original = updated, draft = editor!!.draft.copy(attendees = updated.attendees))
+        enqueue(OutboxOp(newOpId(), OutboxOp.Kind.UPDATE, event, updated))
     }
 
     fun delete(event: CalEvent) {
@@ -735,6 +775,14 @@ class CalendarController(
         val provider = providerFor(draft.accountId)
         if (target == null || provider == null || target.readOnly) {
             toast("Choose a calendar you can edit")
+            return
+        }
+        // Invitations: only your reply, colour and reminders can change.
+        val original0 = state.original
+        if (original0 != null && !original0.organizerSelf) {
+            editor = null
+            val personal = original0.copy(colorId = draft.colorId, reminders = draft.reminders, attendees = draft.attendees)
+            if (personal != original0) enqueue(OutboxOp(newOpId(), OutboxOp.Kind.UPDATE, original0, personal))
             return
         }
         editor = null
@@ -794,5 +842,6 @@ class CalendarController(
         const val MIN_HOUR_HEIGHT = 20f
         const val MAX_HOUR_HEIGHT = 180f
         const val ZOOM_STEP = 1.25f
+        val TEXT_SIZES = listOf(0.9f to "Small", 1f to "Default", 1.15f to "Large", 1.3f to "Larger", 1.5f to "Largest")
     }
 }

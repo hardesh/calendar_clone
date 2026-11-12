@@ -43,6 +43,27 @@ internal data class CachedEvent(
     val rec: String? = null,
     /** Google event colour id. */
     val cid: String? = null,
+    val att: List<CachedAttendee> = emptyList(),
+    /** Video call name and link. */
+    val vn: String? = null,
+    val vu: String? = null,
+    /** Reminders: use calendar default, or these minutes. */
+    val rd: Boolean? = null,
+    val rm: List<Int> = emptyList(),
+    val org: Boolean = true,
+    /** Pending editor requests (only meaningful in the offline queue). */
+    val meet: Boolean = false,
+    val notify: Boolean = false,
+)
+
+@Serializable
+internal data class CachedAttendee(
+    val e: String,
+    val n: String? = null,
+    val s: String = "needsAction",
+    val o: Boolean = false,
+    val me: Boolean = false,
+    val opt: Boolean = false,
 )
 
 @Serializable
@@ -57,6 +78,7 @@ private data class CachedCalendar(
     val readOnly: Boolean,
     val primary: Boolean,
     val selected: Boolean,
+    val rem: List<Int> = emptyList(),
 )
 
 @Serializable
@@ -88,13 +110,13 @@ class EventCache(private val files: FileCache, private val maxWindows: Int = 36)
     fun loadCalendars(): List<CalendarInfo> = runCatching {
         val text = files.read(CALENDARS) ?: return emptyList()
         json.decodeFromString(CachedCalendars.serializer(), text).calendars.map {
-            CalendarInfo(it.a, it.id, it.name, it.color, it.readOnly, it.primary, it.selected)
+            CalendarInfo(it.a, it.id, it.name, it.color, it.readOnly, it.primary, it.selected, it.rem)
         }
     }.getOrDefault(emptyList())
 
     fun saveCalendars(calendars: List<CalendarInfo>) {
         val list = calendars.filter { it.accountId != DEMO_ACCOUNT }.map {
-            CachedCalendar(it.accountId, it.id, it.name, it.color, it.readOnly, it.primary, it.selectedByDefault)
+            CachedCalendar(it.accountId, it.id, it.name, it.color, it.readOnly, it.primary, it.selectedByDefault, it.defaultReminders)
         }
         runCatching { files.write(CALENDARS, json.encodeToString(CachedCalendars.serializer(), CachedCalendars(calendars = list))) }
     }
@@ -130,12 +152,21 @@ class EventCache(private val files: FileCache, private val maxWindows: Int = 36)
     }
 }
 
-internal fun CalEvent.toCached(): CachedEvent = when (val t = timing) {
-        is EventTiming.Timed -> CachedEvent(accountId, calendarId, id, title, s = t.start.toEpochMilliseconds(), e = t.end.toEpochMilliseconds(),
-            loc = location, desc = description, rec = recurringEventId, cid = colorId)
-        is EventTiming.AllDay -> CachedEvent(accountId, calendarId, id, title, ds = t.start.toString(), de = t.endExclusive.toString(),
-            loc = location, desc = description, rec = recurringEventId, cid = colorId)
-    }
+internal fun CalEvent.toCached(): CachedEvent {
+    val t = timing
+    return CachedEvent(
+        a = accountId, c = calendarId, id = id, t = title,
+        s = (t as? EventTiming.Timed)?.start?.toEpochMilliseconds(),
+        e = (t as? EventTiming.Timed)?.end?.toEpochMilliseconds(),
+        ds = (t as? EventTiming.AllDay)?.start?.toString(),
+        de = (t as? EventTiming.AllDay)?.endExclusive?.toString(),
+        loc = location, desc = description, rec = recurringEventId, cid = colorId,
+        att = attendees.map { CachedAttendee(it.email, it.name, it.status, it.organizer, it.self, it.optional) },
+        vn = conference?.name, vu = conference?.url,
+        rd = reminders?.useDefault, rm = reminders?.minutes.orEmpty(),
+        org = organizerSelf, meet = requestMeet, notify = notifyGuests,
+    )
+}
 
 internal fun CachedEvent.toEvent(): CalEvent? {
         val timing = when {
@@ -143,7 +174,15 @@ internal fun CachedEvent.toEvent(): CalEvent? {
             ds != null && de != null -> EventTiming.AllDay(LocalDate.parse(ds), LocalDate.parse(de))
             else -> return null
         }
-        return CalEvent(a, c, id, t, timing, loc, desc, rec, cid)
+        return CalEvent(
+            a, c, id, t, timing, loc, desc, rec, cid,
+            attendees = att.map { app.calendar.model.Attendee(it.e, it.n, it.s, it.o, it.me, it.opt) },
+            conference = if (vn != null && vu != null) app.calendar.model.Conference(vn, vu) else null,
+            reminders = rd?.let { app.calendar.model.EventReminders(it, rm) },
+            organizerSelf = org,
+            requestMeet = meet,
+            notifyGuests = notify,
+        )
     }
 
 /**

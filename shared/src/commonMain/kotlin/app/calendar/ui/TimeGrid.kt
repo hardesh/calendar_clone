@@ -131,9 +131,11 @@ fun TimeGridView(controller: CalendarController, compact: Boolean, modifier: Mod
     val draft = controller.editor?.takeIf { it.isNew }?.draft
     val all = if (draft != null) events + draft else events
     val (allDayEvents, timedEvents) = all.partition { showsInAllDayRow(it) }
-    val hourHeight = controller.hourHeightFor(compact).dp
+    // Larger text gets taller hours so event blocks keep room for their text; zoom applies on top.
+    val textGrow = controller.textScale.coerceAtLeast(1f)
+    val hourHeight = (controller.hourHeightFor(compact) * textGrow).dp
     val zonesShown = if (compact) controller.zones.take(2) else controller.zones
-    val gutterColWidth = if (compact) 42.dp else 52.dp
+    val gutterColWidth = (if (compact) 42.dp else 52.dp) * textGrow
     val gutterWidth = gutterColWidth * zonesShown.size
     var swipeOffset by remember { mutableFloatStateOf(0f) }
 
@@ -155,7 +157,7 @@ fun TimeGridView(controller: CalendarController, compact: Boolean, modifier: Mod
         fun zoomAround(factor: Float, focusY: Float) {
             val oldPx = with(density) { hourHeight.toPx() }
             controller.zoomBy(factor, compact)
-            val newPx = with(density) { controller.hourHeightFor(compact).dp.toPx() }
+            val newPx = with(density) { (controller.hourHeightFor(compact) * textGrow).dp.toPx() }
             val currentScroll = pendingScroll ?: scroll.value
             pendingScroll = ((currentScroll + focusY) * (newPx / oldPx) - focusY).roundToInt()
         }
@@ -164,6 +166,7 @@ fun TimeGridView(controller: CalendarController, compact: Boolean, modifier: Mod
             Modifier
                 .weight(1f)
                 .fillMaxWidth()
+                .testTag("time-grid")
                 .pointerInput(compact) {
                     awaitPointerEventScope {
                         while (true) {
@@ -224,7 +227,7 @@ fun TimeGridView(controller: CalendarController, compact: Boolean, modifier: Mod
 private fun DayHeaderRow(controller: CalendarController, days: List<LocalDate>, gutterWidth: Dp, gutterColWidth: Dp) {
     val colors = LocalAppColors.current
     val today = controller.today()
-    Row(Modifier.fillMaxWidth().height(52.dp)) {
+    Row(Modifier.fillMaxWidth().height(52.dp.scaled())) {
         Box(Modifier.width(gutterWidth).fillMaxHeight())
         for (d in days) {
             val isToday = d == today
@@ -245,7 +248,7 @@ private fun DayHeaderRow(controller: CalendarController, days: List<LocalDate>, 
                 Box(
                     Modifier
                         .padding(start = 6.dp)
-                        .size(26.dp)
+                        .size(26.dp.scaled())
                         .clip(CircleShape)
                         .background(if (isToday) colors.today else Color.Transparent),
                     contentAlignment = Alignment.Center,
@@ -296,6 +299,8 @@ private fun TimeGutter(
                     Text(
                         formatTime(nowMinute, compact = true).let { if (nowMinute % 60 == 0) it else formatTime(nowMinute).substringBefore(' ') },
                         style = AppType.tiny.copy(fontWeight = FontWeight.SemiBold),
+                        maxLines = 1,
+                        softWrap = false,
                         color = colors.today,
                         textAlign = TextAlign.End,
                         modifier = Modifier
@@ -617,15 +622,18 @@ private fun EventBlock(
 
 @Composable
 private fun EventLabel(title: String, time: String, height: Dp, width: Dp, text: Color, sub: Color) {
-    val narrow = width < 90.dp
-    if (height < 34.dp) {
-        Row(Modifier.padding(start = 7.dp, end = 4.dp, top = if (height < 20.dp) 0.dp else 2.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(title, style = AppType.eventTitle.copy(fontSize = if (height < 20.dp) 10.sp else 12.sp), color = text, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-            if (!narrow) Text("  " + time.substringBefore(" –"), style = AppType.eventTime.copy(fontSize = if (height < 20.dp) 10.sp else 11.sp), color = sub, maxLines = 1)
+    // Thresholds follow the text size, so larger text switches to the compact layout sooner.
+    val fs = LocalDensity.current.fontScale.coerceAtLeast(1f)
+    val narrow = width < 90.dp * fs
+    if (height < 34.dp * fs) {
+        val tiny = height < 20.dp * fs
+        Row(Modifier.padding(start = 7.dp, end = 4.dp, top = if (tiny) 0.dp else 2.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(title, style = AppType.eventTitle.copy(fontSize = if (tiny) 10.sp else 12.sp), color = text, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+            if (!narrow) Text("  " + time.substringBefore(" –"), style = AppType.eventTime.copy(fontSize = if (tiny) 10.sp else 11.sp), color = sub, maxLines = 1)
         }
     } else {
         Column(Modifier.padding(start = 7.dp, end = 4.dp, top = 3.dp)) {
-            val titleLines = if (narrow) 1 else (((height - 18.dp) / 15.dp).toInt()).coerceIn(1, 4)
+            val titleLines = if (narrow) 1 else (((height - 18.dp * fs) / (15.dp * fs)).toInt()).coerceIn(1, 4)
             Text(title, style = AppType.eventTitle, color = text, maxLines = titleLines, overflow = TextOverflow.Ellipsis, softWrap = !narrow)
             Text(if (narrow) time.substringBefore(" –") else time, style = AppType.eventTime, color = sub, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }

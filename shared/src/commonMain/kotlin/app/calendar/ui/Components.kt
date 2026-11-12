@@ -80,7 +80,7 @@ fun OutlineButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifi
     HoverRow(
         onClick,
         modifier
-            .height(30.dp)
+            .height(30.dp.scaled())
             .border(1.dp, colors.border, RoundedCornerShape(6.dp)),
     ) {
         Text(text, style = AppType.bodyMedium, color = colors.text, modifier = Modifier.padding(horizontal = 10.dp))
@@ -93,7 +93,7 @@ fun <T> Segmented(options: List<T>, selected: T, label: (T) -> String, onSelect:
     val colors = LocalAppColors.current
     Row(
         modifier
-            .height(30.dp)
+            .height(30.dp.scaled())
             .clip(RoundedCornerShape(7.dp))
             .background(colors.hover)
             .padding(2.dp),
@@ -141,3 +141,8 @@ fun Toggle(checked: Boolean, onChange: (Boolean) -> Unit, modifier: Modifier = M
         Box(Modifier.size(14.dp).clip(androidx.compose.foundation.shape.CircleShape).background(Color.White))
     }
 }
+
+/** A height for a row of text that grows with the text size (zoom and the system font size). */
+@Composable
+fun androidx.compose.ui.unit.Dp.scaled(): androidx.compose.ui.unit.Dp =
+    this * androidx.compose.ui.platform.LocalDensity.current.fontScale.coerceAtLeast(1f)

@@ -95,7 +95,7 @@ fun Sidebar(controller: CalendarController, modifier: Modifier = Modifier, compa
             AccountBlock(controller, account)
         }
         val google = controller.googleAuth
-        HoverRow(onClick = { controller.addGoogleAccount() }, modifier = Modifier.fillMaxWidth().height(30.dp), enabled = !controller.addingAccount) {
+        HoverRow(onClick = { controller.addGoogleAccount() }, modifier = Modifier.fillMaxWidth().height(30.dp.scaled()), enabled = !controller.addingAccount) {
             Icon(Icons.Default.Add, null, tint = colors.textSecondary, modifier = Modifier.padding(start = 6.dp, end = 6.dp).size(16.dp))
             Text(
                 if (controller.addingAccount) "Waiting for Google sign-in…" else "Add Google account",
@@ -117,6 +117,7 @@ fun Sidebar(controller: CalendarController, modifier: Modifier = Modifier, compa
             ToggleRow("Demo data", controller.demoEnabled) { controller.changeDemoEnabled(it) }
         }
         ZoomRow(controller, compact)
+        TextSizeRow(controller)
         if (controller.supportsReminders) ReminderRow(controller)
         ToggleRow("Week starts Monday", controller.weekStart == DayOfWeek.MONDAY) {
             controller.changeWeekStart(if (it) DayOfWeek.MONDAY else DayOfWeek.SUNDAY)
@@ -163,10 +164,10 @@ private fun MiniMonth(controller: CalendarController, onPick: (LocalDate) -> Uni
                     val d = start.plusDays(r * 7 + c)
                     val isToday = d == today
                     val inRange = d in visible && controller.viewMode != ViewMode.MONTH
-                    Box(Modifier.weight(1f).height(26.dp), contentAlignment = Alignment.Center) {
+                    Box(Modifier.weight(1f).height(26.dp.scaled()), contentAlignment = Alignment.Center) {
                         Box(
                             Modifier
-                                .size(24.dp)
+                                .size(24.dp.scaled())
                                 .clip(CircleShape)
                                 .background(
                                     when {
@@ -238,7 +239,7 @@ private fun AccountBlock(controller: CalendarController, account: app.calendar.m
 private fun CalendarRow(cal: CalendarInfo, visible: Boolean, onToggle: () -> Unit) {
     val colors = LocalAppColors.current
     val c = Color(cal.color.toInt())
-    HoverRow(onClick = onToggle, modifier = Modifier.fillMaxWidth().height(28.dp)) {
+    HoverRow(onClick = onToggle, modifier = Modifier.fillMaxWidth().height(28.dp.scaled())) {
         Box(
             Modifier
                 .padding(start = 8.dp, end = 8.dp)
@@ -348,7 +349,7 @@ private fun ZonePickerDialog(controller: CalendarController, onDismiss: () -> Un
             Spacer(Modifier.height(6.dp))
             LazyColumn(Modifier.fillMaxWidth()) {
                 items(searchZones(query), key = { it.id }) { opt ->
-                    HoverRow(onClick = { controller.addZone(opt.id); onDismiss() }, modifier = Modifier.fillMaxWidth().height(34.dp)) {
+                    HoverRow(onClick = { controller.addZone(opt.id); onDismiss() }, modifier = Modifier.fillMaxWidth().height(34.dp.scaled())) {
                         Text(opt.city, style = AppType.body, color = colors.text, modifier = Modifier.padding(start = 8.dp).weight(1f), maxLines = 1)
                         Text(
                             zoneOrNull(opt.id)?.let { offsetLabel(it, now) } ?: "",
@@ -363,24 +364,57 @@ private fun ZonePickerDialog(controller: CalendarController, onDismiss: () -> Un
     }
 }
 
+/** Text size for the whole app: Small … Largest. */
+@Composable
+private fun TextSizeRow(controller: CalendarController) {
+    val colors = LocalAppColors.current
+    var open by remember { mutableStateOf(false) }
+    val current = CalendarController.TEXT_SIZES.minByOrNull { kotlin.math.abs(it.first - controller.textScale) }?.second ?: "Default"
+    Row(
+        Modifier.fillMaxWidth().height(34.dp.scaled()).padding(start = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("Text size", style = AppType.body, color = colors.text, modifier = Modifier.weight(1f))
+        Box {
+            HoverRow(onClick = { open = true }, modifier = Modifier.height(28.dp.scaled())) {
+                Text(current, style = AppType.body, color = colors.textSecondary, modifier = Modifier.padding(horizontal = 8.dp))
+                Icon(Icons.Default.KeyboardArrowDown, null, tint = colors.textSecondary, modifier = Modifier.size(16.dp))
+            }
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                for ((scale, label) in CalendarController.TEXT_SIZES) {
+                    DropdownMenuItem(
+                        text = { Text(label, style = AppType.body.copy(fontSize = AppType.body.fontSize * scale)) },
+                        onClick = { open = false; controller.changeTextScale(scale) },
+                    )
+                }
+            }
+        }
+    }
+}
+
 /** "Notify before events": Off / 5 / 10 / 15 / 30 / 60 minutes. */
 @Composable
 private fun ReminderRow(controller: CalendarController) {
     val colors = LocalAppColors.current
     var open by remember { mutableStateOf(false) }
-    fun label(m: Int) = if (m == 0) "Off" else if (m == 60) "1 hour" else "$m min"
+    fun label(m: Int) = when (m) {
+        app.calendar.state.REMINDERS_FROM_GOOGLE -> "As in Google"
+        0 -> "Off"
+        60 -> "1 hour"
+        else -> "$m min"
+    }
     Row(
-        Modifier.fillMaxWidth().height(34.dp).padding(start = 8.dp),
+        Modifier.fillMaxWidth().height(34.dp.scaled()).padding(start = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text("Notify before events", style = AppType.body, color = colors.text, modifier = Modifier.weight(1f))
         Box {
-            HoverRow(onClick = { open = true }, modifier = Modifier.height(28.dp)) {
+            HoverRow(onClick = { open = true }, modifier = Modifier.height(28.dp.scaled())) {
                 Text(label(controller.reminderMinutes), style = AppType.body, color = colors.textSecondary, modifier = Modifier.padding(horizontal = 8.dp))
                 Icon(Icons.Default.KeyboardArrowDown, null, tint = colors.textSecondary, modifier = Modifier.size(16.dp))
             }
             DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-                for (m in listOf(0, 5, 10, 15, 30, 60)) {
+                for (m in listOf(app.calendar.state.REMINDERS_FROM_GOOGLE, 0, 5, 10, 15, 30, 60)) {
                     DropdownMenuItem(text = { Text(label(m)) }, onClick = { open = false; controller.changeReminderMinutes(m) })
                 }
             }
@@ -394,7 +428,7 @@ private fun ZoomRow(controller: CalendarController, compact: Boolean) {
     val colors = LocalAppColors.current
     val percent = (controller.hourHeightFor(compact) / controller.defaultHourHeight(compact) * 100).roundToInt()
     Row(
-        Modifier.fillMaxWidth().height(34.dp).padding(start = 8.dp),
+        Modifier.fillMaxWidth().height(34.dp.scaled()).padding(start = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text("Zoom", style = AppType.body, color = colors.text, modifier = Modifier.weight(1f))
@@ -416,7 +450,7 @@ private fun ZoomRow(controller: CalendarController, compact: Boolean) {
 private fun ToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     val colors = LocalAppColors.current
     Row(
-        Modifier.fillMaxWidth().height(34.dp).padding(start = 8.dp),
+        Modifier.fillMaxWidth().height(34.dp.scaled()).padding(start = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {

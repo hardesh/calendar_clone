@@ -41,7 +41,7 @@ class MainActivity : ComponentActivity() {
 
         Reminders.ensureChannel(this)
         ReminderSync.enqueue(this)
-        if (Build.VERSION.SDK_INT >= 33 && Reminders.minutesBefore(this) > 0 && !Reminders.canNotify(this)) {
+        if (Build.VERSION.SDK_INT >= 33 && Reminders.minutesBefore(this) != 0 && !Reminders.canNotify(this)) {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
         openEventFrom(intent)

@@ -42,15 +42,31 @@ class ScreenshotTest {
         return c
     }
 
-    private fun shoot(name: String, mode: ViewMode, width: Int, height: Int, dark: Boolean, density: Float = 1f, editor: Boolean = false) {
+    private fun shoot(name: String, mode: ViewMode, width: Int, height: Int, dark: Boolean, density: Float = 1f, editor: Boolean = false, zoom: Float? = null, text: Float? = null) {
         val c = controller(mode)
-        if (editor) c.openEditor(c.eventsBetween(c.today(), c.today().let { kotlinx.datetime.LocalDate.fromEpochDays(it.toEpochDays() + 1) }).first { it.title == "Lunch" })
+        zoom?.let { c.setZoom(it) }
+        text?.let { c.changeTextScale(it) }
+        if (editor) c.openEditor(c.eventsBetween(c.today(), c.today().let { kotlinx.datetime.LocalDate.fromEpochDays(it.toEpochDays() + 1) }).first { it.title == "Lunch" }).also {
+            c.updateDraft { d ->
+                d.copy(
+                    attendees = listOf(
+                        app.calendar.model.Attendee("me@example.com", "You", "accepted", organizer = true, self = true),
+                        app.calendar.model.Attendee("sam@example.com", "Sam Lee", "accepted"),
+                        app.calendar.model.Attendee("priya@example.com", "Priya", "tentative"),
+                        app.calendar.model.Attendee("alex@example.com"),
+                    ),
+                    conference = app.calendar.model.Conference("Google Meet", "https://meet.google.com/abc-defg-hij"),
+                    reminders = app.calendar.model.EventReminders(false, listOf(10, 60)),
+                )
+            }
+        }
         ImageComposeScene(width, height, Density(density)) {
             AppTheme(dark = dark) { CalendarScreen(c) }
         }.use { scene ->
             scene.render(0)
             scene.render(16_000_000)
-            val img = scene.render(100_000_000)
+            scene.render(400_000_000)
+            val img = scene.render(1_000_000_000)
             val out = File("build/screenshots/$name.png")
             out.parentFile.mkdirs()
             out.writeBytes(img.encodeToData()!!.bytes)
@@ -62,7 +78,10 @@ class ScreenshotTest {
         shoot("desktop-week-light", ViewMode.WEEK, 1280, 840, dark = false)
         shoot("desktop-week-dark", ViewMode.WEEK, 1280, 840, dark = true)
         shoot("desktop-day-light", ViewMode.DAY, 1280, 840, dark = false)
-        shoot("desktop-editor-light", ViewMode.WEEK, 1280, 840, dark = false, editor = true)
+        shoot("desktop-week-zoom150", ViewMode.WEEK, 1280, 840, dark = false, zoom = 72f)
+        shoot("desktop-week-text-larger", ViewMode.WEEK, 1280, 840, dark = false, text = 1.3f)
+        shoot("phone-3day-text-larger", ViewMode.THREE_DAY, 412 * 2, 900 * 2, dark = false, density = 2f, text = 1.3f)
+        shoot("desktop-editor-light", ViewMode.WEEK, 1280, 1000, dark = false, editor = true)
         shoot("desktop-month-light", ViewMode.MONTH, 1280, 840, dark = false)
         shoot("desktop-month-dark", ViewMode.MONTH, 1280, 840, dark = true)
         shoot("phone-3day-dark", ViewMode.THREE_DAY, 412 * 2, 900 * 2, dark = true, density = 2f)

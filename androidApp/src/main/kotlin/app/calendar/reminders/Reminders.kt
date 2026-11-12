@@ -24,6 +24,7 @@ import app.calendar.R
 import app.calendar.data.EventCache
 import app.calendar.model.EventTiming
 import app.calendar.model.UpcomingEvent
+import app.calendar.model.meetingLink
 import app.calendar.platform.AndroidGoogleAuth
 import app.calendar.platform.DirectoryCache
 import app.calendar.platform.SharedPrefsStore
@@ -56,10 +57,19 @@ object Reminders {
 
     fun minutesBefore(context: Context): Int = AppSettings(SharedPrefsStore(context)).reminderMinutes
 
-    private fun code(e: UpcomingEvent) = (e.key + "@" + e.start.toEpochMilliseconds()).hashCode()
+    private fun code(e: UpcomingEvent, minutes: Int) = (e.key + "@" + e.start.toEpochMilliseconds() + "-" + minutes).hashCode()
 
-    private fun alarmIntent(context: Context, e: UpcomingEvent?) = Intent(context, ReminderReceiver::class.java).setAction(ACTION).apply {
+    /** Minutes-before values to notify at for [e] under the current setting. */
+    private fun leadTimes(setting: Int, e: UpcomingEvent): List<Int> = when {
+        setting < 0 -> e.reminderMinutes
+        setting == 0 -> emptyList()
+        else -> listOf(setting)
+    }
+
+    private fun alarmIntent(context: Context, e: UpcomingEvent?, minutes: Int = 0) = Intent(context, ReminderReceiver::class.java).setAction(ACTION).apply {
         if (e != null) {
+            putExtra("minutes", minutes)
+            e.conferenceUrl?.let { putExtra("join", it) }
             putExtra("key", e.key)
             putExtra("title", e.title)
             putExtra("start", e.start.toEpochMilliseconds())
@@ -80,21 +90,24 @@ object Reminders {
         }
         val real = events.filter { !it.key.startsWith("demo|") }
         prefs.edit().putString(KEY_UPCOMING, encode(real)).apply()
-        val minutes = minutesBefore(app)
-        if (minutes <= 0) {
+        val setting = minutesBefore(app)
+        if (setting == 0) {
             prefs.edit().putStringSet(KEY_CODES, emptySet()).apply()
             return
         }
         val now = Clock.System.now()
         val fired = prefs.getStringSet(KEY_FIRED, emptySet()).orEmpty()
         val codes = HashSet<String>()
-        for (e in real) {
+        for (e in real) for (minutes in leadTimes(setting, e)) {
             if (e.start <= now) continue
-            val c = code(e)
+            val c = code(e, minutes)
             if (c.toString() in fired) continue
-            // If the reminder time has just passed (e.g. event added 5 minutes before it starts), notify now.
-            val trigger = maxOf(e.start.toEpochMilliseconds() - minutes * 60_000L, now.toEpochMilliseconds() + 1_000)
-            val pi = PendingIntent.getBroadcast(app, c, alarmIntent(app, e), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            val triggerAt = e.start.toEpochMilliseconds() - minutes * 60_000L
+            // A reminder time that passed more than a minute ago is skipped, except the latest one
+            // just before the start (e.g. an event added 5 minutes before it begins).
+            if (triggerAt < now.toEpochMilliseconds() - 60_000 && minutes != leadTimes(setting, e).minOrNull()) continue
+            val trigger = maxOf(triggerAt, now.toEpochMilliseconds() + 1_000)
+            val pi = PendingIntent.getBroadcast(app, c, alarmIntent(app, e, minutes), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
             if (Build.VERSION.SDK_INT < 31 || alarms.canScheduleExactAlarms()) {
                 alarms.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, trigger, pi)
             } else {
@@ -131,7 +144,7 @@ object Reminders {
         val start = intent.getLongExtra("start", 0)
         val end = intent.getLongExtra("end", 0)
         val location = intent.getStringExtra("location")
-        val code = (key + "@" + start).hashCode()
+        val code = (key + "@" + start + "-" + intent.getIntExtra("minutes", 0)).hashCode()
         val prefs = prefs(context)
         val fired = (prefs.getStringSet(KEY_FIRED, emptySet()).orEmpty() + code.toString()).toList().takeLast(300).toSet()
         prefs.edit().putStringSet(KEY_FIRED, fired).apply()
@@ -154,7 +167,7 @@ object Reminders {
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        val notification = NotificationCompat.Builder(context, CHANNEL)
+        val builder = NotificationCompat.Builder(context, CHANNEL)
             .setSmallIcon(R.drawable.ic_notification)
             .setColor(intent.getLongExtra("color", 0xFFEB5757L).toInt())
             .setContentTitle(title)
@@ -166,14 +179,24 @@ object Reminders {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setContentIntent(open)
             .setAutoCancel(true)
-            .build()
-        context.getSystemService(NotificationManager::class.java).notify(code, notification)
+        // "Join" button for events with a video call.
+        intent.getStringExtra("join")?.let { url ->
+            val join = PendingIntent.getActivity(
+                context, code + 1,
+                Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            builder.addAction(0, "Join", join)
+        }
+        // One notification per event: a later reminder replaces an earlier one.
+        context.getSystemService(NotificationManager::class.java).notify((key + "@" + start).hashCode(), builder.build())
     }
 
     private fun encode(events: List<UpcomingEvent>): String = JSONArray().apply {
         events.forEach { e ->
             put(JSONObject().put("k", e.key).put("t", e.title).put("s", e.start.toEpochMilliseconds())
-                .put("e", e.end.toEpochMilliseconds()).put("c", e.color).put("l", e.location ?: JSONObject.NULL))
+                .put("e", e.end.toEpochMilliseconds()).put("c", e.color).put("l", e.location ?: JSONObject.NULL)
+                .put("r", JSONArray(e.reminderMinutes)).put("j", e.conferenceUrl ?: JSONObject.NULL))
         }
     }.toString()
 
@@ -182,7 +205,9 @@ object Reminders {
         List(arr.length()) { i ->
             val o = arr.getJSONObject(i)
             UpcomingEvent(o.getString("k"), o.getString("t"), Instant.fromEpochMilliseconds(o.getLong("s")),
-                Instant.fromEpochMilliseconds(o.getLong("e")), o.getLong("c"), o.optString("l").takeIf { !o.isNull("l") })
+                Instant.fromEpochMilliseconds(o.getLong("e")), o.getLong("c"), o.optString("l").takeIf { !o.isNull("l") },
+                reminderMinutes = o.optJSONArray("r")?.let { r -> List(r.length()) { r.getInt(it) } }.orEmpty(),
+                conferenceUrl = o.optString("j").takeIf { !o.isNull("j") && it.isNotEmpty() })
         }
     }.getOrDefault(emptyList())
 }
@@ -217,7 +242,7 @@ class ReminderSyncWorker(context: Context, params: WorkerParameters) : Coroutine
         val ctx = applicationContext
         val store = SharedPrefsStore(ctx)
         val settings = AppSettings(store)
-        if (settings.reminderMinutes <= 0) return Result.success()
+        if (settings.reminderMinutes == 0) return Result.success()
         val provider = createGoogleProvider(AndroidGoogleAuth(ctx), store)
         val accounts = provider.accounts().map { it.id }.toSet()
         if (accounts.isEmpty()) return Result.success()
@@ -234,7 +259,12 @@ class ReminderSyncWorker(context: Context, params: WorkerParameters) : Coroutine
             }
             events.filter { it.timing is EventTiming.Timed }.mapTo(upcoming) {
                 val t = it.timing as EventTiming.Timed
-                UpcomingEvent(it.key, it.title, t.start, t.end, it.colorOverride ?: cal.color, it.location)
+                val r = it.reminders
+                UpcomingEvent(
+                    it.key, it.title, t.start, t.end, it.colorOverride ?: cal.color, it.location,
+                    reminderMinutes = if (r == null || r.useDefault) cal.defaultReminders else r.minutes,
+                    conferenceUrl = it.meetingLink()?.url,
+                )
             }
         }
         Reminders.schedule(ctx, upcoming.sortedBy { it.start })

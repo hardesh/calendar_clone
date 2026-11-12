@@ -39,6 +39,8 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Instant
+import app.calendar.model.fieldsComparedTo
+import app.calendar.model.meetingLink
 
 class GoogleApiTest {
     private val cal = CalendarInfo("me@example.com", "en.indian#holiday@group.v.calendar.google.com", "Me", 0xFF0000FFL, readOnly = false, primary = true)
@@ -564,5 +566,133 @@ class ColorZoomDemoTest {
         val s2 = AppSettings(InMemoryStore()).apply { demoEnabled = true }
         val c2 = CalendarController(listOf(DemoProvider({ zone }, latencyMs = 0)), s2, CoroutineScope(Dispatchers.Unconfined), clock = { now })
         assertTrue(c2.demoEnabled)
+    }
+}
+
+class GuestsVideoRemindersTest {
+    private val cal = CalendarInfo("me@example.com", "primary", "Me", 0xFF0000FFL, readOnly = false, primary = true, defaultReminders = listOf(10, 30))
+
+    private fun api(body: String): Pair<GoogleCalendarApi, MutableList<HttpRequestData>> {
+        val seen = mutableListOf<HttpRequestData>()
+        return GoogleCalendarApi(HttpClient(MockEngine { req ->
+            seen += req
+            respond(body, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+        })) to seen
+    }
+
+    private val invitation = """
+        {"id":"9","summary":"Software Roadmap","start":{"dateTime":"2026-11-12T04:00:00Z"},"end":{"dateTime":"2026-11-12T05:00:00Z"},
+         "organizer":{"email":"boss@example.com"},
+         "attendees":[
+           {"email":"boss@example.com","displayName":"Boss","responseStatus":"accepted","organizer":true},
+           {"email":"me@example.com","responseStatus":"needsAction","self":true},
+           {"email":"room-4@resource.calendar.google.com","resource":true,"responseStatus":"accepted"}],
+         "hangoutLink":"https://meet.google.com/abc-defg-hij",
+         "conferenceData":{"conferenceSolution":{"name":"Google Meet"},"entryPoints":[{"entryPointType":"video","uri":"https://meet.google.com/abc-defg-hij"},{"entryPointType":"phone","uri":"tel:+1-555"}]},
+         "reminders":{"useDefault":false,"overrides":[{"method":"popup","minutes":5},{"method":"email","minutes":60}]}}
+    """.trimIndent()
+
+    @Test
+    fun readsGuestsVideoAndReminders() = runTest {
+        val (api, _) = api("""{"items":[$invitation]}""")
+        val e = api.events(cal, Instant.parse("2026-11-01T00:00:00Z"), Instant.parse("2026-12-01T00:00:00Z")) { "t" }.single()
+        assertEquals(listOf("boss@example.com", "me@example.com"), e.attendees.map { it.email }, "rooms are not guests")
+        assertEquals("needsAction", e.selfAttendee?.status)
+        assertFalse(e.organizerSelf)
+        assertEquals(app.calendar.model.Conference("Google Meet", "https://meet.google.com/abc-defg-hij"), e.conference)
+        assertEquals(app.calendar.model.EventReminders(false, listOf(5)), e.reminders, "only popup reminders")
+    }
+
+    @Test
+    fun readsCalendarDefaultReminders() = runTest {
+        val (api, _) = api("""{"items":[{"id":"primary","summary":"Me","accessRole":"owner","defaultReminders":[{"method":"popup","minutes":30},{"method":"email","minutes":1440},{"method":"popup","minutes":10}]}]}""")
+        assertEquals(listOf(10, 30), api.calendarList("me") { "t" }.single().defaultReminders)
+    }
+
+    @Test
+    fun dragDoesNotRewriteGuestsOrEmailThem() = runTest {
+        val (api, seen) = api(invitation)
+        val before = CalEvent("me@example.com", "primary", "9", "X", EventTiming.Timed(Instant.parse("2026-11-12T04:00:00Z"), Instant.parse("2026-11-12T05:00:00Z")),
+            attendees = listOf(app.calendar.model.Attendee("a@example.com")), reminders = app.calendar.model.EventReminders(true))
+        val moved = before.copy(timing = EventTiming.Timed(Instant.parse("2026-11-12T06:00:00Z"), Instant.parse("2026-11-12T07:00:00Z")))
+        api.patch(before, moved.fieldsComparedTo(before)) { "t" }
+        val body = Json.parseToJsonElement((seen[0].body as TextContent).text).jsonObject
+        assertFalse("attendees" in body)
+        assertFalse("reminders" in body)
+        assertEquals("none", seen[0].url.parameters["sendUpdates"])
+        assertEquals("1", seen[0].url.parameters["conferenceDataVersion"])
+    }
+
+    @Test
+    fun addingGuestsMeetAndRemindersWritesThem() = runTest {
+        val (api, seen) = api(invitation)
+        val before = CalEvent("me@example.com", "primary", "9", "X", EventTiming.Timed(Instant.parse("2026-11-12T04:00:00Z"), Instant.parse("2026-11-12T05:00:00Z")))
+        val after = before.copy(
+            attendees = listOf(app.calendar.model.Attendee("sam@example.com")),
+            reminders = app.calendar.model.EventReminders(false, listOf(15)),
+            requestMeet = true, notifyGuests = true,
+        )
+        api.patch(before, after.fieldsComparedTo(before)) { "t" }
+        val body = Json.parseToJsonElement((seen[0].body as TextContent).text).jsonObject
+        assertEquals("sam@example.com", body.getValue("attendees").toString().let { Regex("\"email\":\"([^\"]+)\"").find(it)!!.groupValues[1] })
+        assertEquals("15", Regex("\"minutes\":(\\d+)").find(body.getValue("reminders").toString())!!.groupValues[1])
+        assertEquals("hangoutsMeet", Regex("\"type\":\"([^\"]+)\"").find(body.getValue("conferenceData").toString())!!.groupValues[1])
+        assertEquals("all", seen[0].url.parameters["sendUpdates"])
+    }
+
+    @Test
+    fun meetingLinksFoundInLocationOrDescription() {
+        val base = CalEvent("a", "c", "1", "X", EventTiming.AllDay(LocalDate(2026, 11, 12), LocalDate(2026, 11, 13)))
+        assertEquals("Zoom", base.copy(location = "https://us02web.zoom.us/j/123456?pwd=abc").meetingLink()?.name)
+        assertEquals("https://teams.microsoft.com/l/meetup-join/xyz", base.copy(description = "Join: https://teams.microsoft.com/l/meetup-join/xyz\nThanks").meetingLink()?.url)
+        assertNull(base.copy(location = "Room 4").meetingLink())
+    }
+
+    @Test
+    fun invitationsCannotBeDraggedButCanBeAnswered() {
+        val zone = TimeZone.of("Asia/Kolkata")
+        val google = FakeGoogle(zone)
+        val c = CalendarController(listOf(google), AppSettings(InMemoryStore()).apply { zones = listOf(ZoneEntry("Asia/Kolkata")) },
+            CoroutineScope(Dispatchers.Unconfined), clock = { LocalDateTime(2026, 11, 11, 10, 0).toInstant(zone) })
+        runBlocking { c.reloadAccounts() }
+        val invite = google.event.copy(organizerSelf = false, attendees = listOf(
+            app.calendar.model.Attendee("boss@example.com", organizer = true, status = "accepted"),
+            app.calendar.model.Attendee(google.account.email, self = true),
+        ))
+        assertFalse(c.canEdit(invite))
+        assertTrue(c.canEditPersonal(invite))
+        c.respond(invite, "accepted")
+        assertEquals(1, c.pendingChanges, "reply queued for Google")
+        val answered = invite.copy(attendees = invite.attendees.map { if (it.self) it.copy(status = "accepted") else it })
+        c.respond(answered, "accepted") // same answer again on the updated event: nothing new
+        assertEquals(1, c.pendingChanges)
+    }
+
+    @Test
+    fun cacheKeepsGuestsVideoAndReminders() {
+        val cache = app.calendar.data.EventCache(app.calendar.data.InMemoryFileCache())
+        val e = CalEvent("a", "c", "1", "X", EventTiming.AllDay(LocalDate(2026, 11, 12), LocalDate(2026, 11, 13)),
+            attendees = listOf(app.calendar.model.Attendee("b@example.com", "Bea", "tentative", optional = true)),
+            conference = app.calendar.model.Conference("Zoom", "https://zoom.us/j/1"),
+            reminders = app.calendar.model.EventReminders(false, listOf(5, 60)), organizerSelf = false)
+        cache.saveWindow(kotlinx.datetime.DayOfWeek.SUNDAY, LocalDate(2026, 11, 1), listOf(e), Instant.parse("2026-11-12T00:00:00Z"))
+        assertEquals(listOf(e), cache.loadWindow(kotlinx.datetime.DayOfWeek.SUNDAY, LocalDate(2026, 11, 1)))
+        cache.saveCalendars(listOf(cal))
+        assertEquals(listOf(10, 30), cache.loadCalendars().single().defaultReminders)
+    }
+}
+
+class TextSizeTest {
+    @Test
+    fun textSizeIsSeparateFromZoomAndRemembered() {
+        val store = InMemoryStore()
+        val c = CalendarController(emptyList(), AppSettings(store), CoroutineScope(Dispatchers.Unconfined),
+            clock = { Instant.parse("2026-11-12T00:00:00Z") })
+        assertEquals(1f, c.textScale)
+        c.zoomBy(2f, compact = true)
+        assertEquals(1f, c.textScale, "zoom doesn't change text size")
+        c.changeTextScale(1.3f)
+        assertEquals(1.3f, AppSettings(store).textScale)
+        assertEquals(104f, c.hourHeightFor(compact = true), "text size doesn't change zoom")
     }
 }

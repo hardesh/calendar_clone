@@ -10,8 +10,8 @@ Deferred features, with what the current code already provides for each.
   gets tokens without UI once access is granted. A widget can read the cache directly.
 - [x] **Mac menu bar** with the next event and today's list.
 - [x] **Phone reminders** before events, including in the background.
-- [ ] **Use Google's own reminder settings** per event/calendar instead of one app-wide time.
-  Provided: reminders are scheduled from `UpcomingEvent`s in one place (`Reminders.schedule`).
+- [x] **Guests, replies, video calls and per-event reminders** in the editor; phone
+  notifications follow Google's reminders.
 - [ ] **Desktop notifications** before events (Mac/Linux).
   Provided: the desktop app already receives upcoming events for the menu bar.
 - [ ] **Linux menu-bar text**: today Linux shows the app icon with the next event as a tooltip.
@@ -35,6 +35,5 @@ Deferred features, with what the current code already provides for each.
 - [ ] Undo for drags (toast with an "Undo" button).
 - [ ] Drag an all-day event into the time grid to give it a time (and back).
 - [ ] Configurable number of days (e.g. 5-day work week); today: Day/Week/Month on desktop, Day/3 days/Month on phone.
-- [ ] Attendees, video-call links, reminders and event colours in the editor.
 - [ ] Push updates from Google instead of the 5-minute refresh.
 - [ ] Bundle the Inter font for an even closer Notion look.

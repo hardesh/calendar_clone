@@ -1,6 +1,9 @@
 package app.calendar.data
 
+import app.calendar.model.Attendee
 import app.calendar.model.CalEvent
+import app.calendar.model.Conference
+import app.calendar.model.EventReminders
 import app.calendar.model.CalendarInfo
 import app.calendar.model.EventColors
 import app.calendar.model.EventFields
@@ -47,6 +50,39 @@ internal data class CalendarListEntry(
     val primary: Boolean? = null,
     val selected: Boolean? = null,
     val hidden: Boolean? = null,
+    val defaultReminders: List<ReminderDto> = emptyList(),
+)
+
+@Serializable
+internal data class ReminderDto(val method: String? = null, val minutes: Int = 0)
+
+@Serializable
+internal data class RemindersDto(val useDefault: Boolean = true, val overrides: List<ReminderDto> = emptyList())
+
+@Serializable
+internal data class AttendeeDto(
+    val email: String? = null,
+    val displayName: String? = null,
+    val responseStatus: String? = null,
+    val organizer: Boolean? = null,
+    val self: Boolean? = null,
+    val optional: Boolean? = null,
+    val resource: Boolean? = null,
+)
+
+@Serializable
+internal data class PersonDto(val email: String? = null, val self: Boolean? = null)
+
+@Serializable
+internal data class EntryPointDto(val entryPointType: String? = null, val uri: String? = null)
+
+@Serializable
+internal data class ConferenceSolutionDto(val name: String? = null)
+
+@Serializable
+internal data class ConferenceDataDto(
+    val entryPoints: List<EntryPointDto> = emptyList(),
+    val conferenceSolution: ConferenceSolutionDto? = null,
 )
 
 @Serializable
@@ -63,6 +99,11 @@ internal data class EventDto(
     val recurringEventId: String? = null,
     val start: EventDateTime? = null,
     val end: EventDateTime? = null,
+    val attendees: List<AttendeeDto> = emptyList(),
+    val organizer: PersonDto? = null,
+    val hangoutLink: String? = null,
+    val conferenceData: ConferenceDataDto? = null,
+    val reminders: RemindersDto? = null,
 )
 
 @Serializable
@@ -84,6 +125,7 @@ internal fun CalendarListEntry.toCalendarInfo(accountId: String) = CalendarInfo(
     readOnly = accessRole != "owner" && accessRole != "writer",
     primary = primary == true,
     selectedByDefault = selected == true,
+    defaultReminders = defaultReminders.filter { it.method == null || it.method == "popup" }.map { it.minutes }.distinct().sorted(),
 )
 
 /** Maps an API event; returns null for cancelled or malformed events. */
@@ -106,6 +148,18 @@ internal fun EventDto.toCalEvent(accountId: String, calendarId: String): CalEven
         description = description,
         recurringEventId = recurringEventId,
         colorId = colorId?.takeIf { EventColors.argbFor(it) != null },
+        // Rooms and other resources aren't people; leave them out of the guest list.
+        attendees = attendees.filter { it.resource != true && it.email != null }.map {
+            Attendee(it.email!!, it.displayName, it.responseStatus ?: "needsAction", it.organizer == true, it.self == true, it.optional == true)
+        },
+        conference = (conferenceData?.entryPoints?.firstOrNull { it.entryPointType == "video" }?.uri ?: hangoutLink)?.let { url ->
+            Conference(conferenceData?.conferenceSolution?.name ?: "Google Meet", url)
+        },
+        reminders = reminders?.let { r ->
+            EventReminders(r.useDefault, r.overrides.filter { it.method == null || it.method == "popup" }.map { it.minutes }.distinct().sorted())
+        },
+        // No organiser listed means it's your own event; otherwise Google marks you with self=true.
+        organizerSelf = organizer?.let { it.self == true } ?: true,
     )
 }
 
@@ -116,6 +170,32 @@ internal fun EventFields.toJson(): JsonObject = buildJsonObject {
     put("colorId", colorId?.let { kotlinx.serialization.json.JsonPrimitive(it) } ?: JsonNull)
     location?.let { put("location", it) }
     description?.let { put("description", it) }
+    attendees?.let { list ->
+        put("attendees", kotlinx.serialization.json.buildJsonArray {
+            for (a in list) add(buildJsonObject {
+                put("email", a.email)
+                a.name?.let { put("displayName", it) }
+                put("responseStatus", a.status)
+                if (a.optional) put("optional", true)
+            })
+        })
+    }
+    reminders?.let { r ->
+        put("reminders", buildJsonObject {
+            put("useDefault", r.useDefault)
+            put("overrides", kotlinx.serialization.json.buildJsonArray {
+                if (!r.useDefault) for (m in r.minutes) add(buildJsonObject { put("method", "popup"); put("minutes", m) })
+            })
+        })
+    }
+    if (requestMeet) {
+        put("conferenceData", buildJsonObject {
+            put("createRequest", buildJsonObject {
+                put("requestId", "cal-" + kotlin.random.Random.nextLong().toULong().toString(16))
+                put("conferenceSolutionKey", buildJsonObject { put("type", "hangoutsMeet") })
+            })
+        })
+    }
     when (val t = timing) {
         is EventTiming.AllDay -> {
             put("start", buildJsonObject { put("date", t.start.toString()); put("dateTime", JsonNull) })
@@ -179,13 +259,13 @@ class GoogleCalendarApi(
     }
 
     suspend fun insert(calendar: CalendarInfo, fields: EventFields, token: suspend (Boolean) -> String): CalEvent {
-        val body = call(HttpMethod.Post, eventsPath(calendar.id), token) { jsonBody(fields.toJson()) }
+        val body = call(HttpMethod.Post, eventsPath(calendar.id), token) { writeParams(fields); jsonBody(fields.toJson()) }
         return googleJson.decodeFromString<EventDto>(body).toCalEvent(calendar.accountId, calendar.id)
             ?: throw CalendarApiException(500, "Google returned an unexpected event")
     }
 
     suspend fun patch(event: CalEvent, fields: EventFields, token: suspend (Boolean) -> String): CalEvent {
-        val body = call(HttpMethod.Patch, eventsPath(event.calendarId) + event.id, token) { jsonBody(fields.toJson()) }
+        val body = call(HttpMethod.Patch, eventsPath(event.calendarId) + event.id, token) { writeParams(fields); jsonBody(fields.toJson()) }
         return googleJson.decodeFromString<EventDto>(body).toCalEvent(event.accountId, event.calendarId)
             ?: throw CalendarApiException(500, "Google returned an unexpected event")
     }
@@ -207,6 +287,12 @@ class GoogleCalendarApi(
     }
 
     private fun eventsPath(calendarId: String) = listOf("calendar", "v3", "calendars", calendarId, "events")
+
+    /** Lets Google create/return video-call details and decides whether guests get emails. */
+    private fun HttpRequestBuilder.writeParams(fields: EventFields) {
+        parameter("conferenceDataVersion", 1)
+        parameter("sendUpdates", if (fields.notifyGuests) "all" else "none")
+    }
 
     private fun HttpRequestBuilder.jsonBody(obj: JsonObject) {
         contentType(ContentType.Application.Json)

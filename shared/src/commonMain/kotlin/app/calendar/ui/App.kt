@@ -22,6 +22,7 @@ import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -38,6 +39,8 @@ import androidx.compose.ui.input.key.isMetaPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import app.calendar.data.DemoProvider
 import app.calendar.data.GoogleCalendarApi
@@ -120,36 +123,41 @@ fun CalendarScreen(controller: CalendarController) {
                 !compact && controller.viewMode == ViewMode.THREE_DAY -> controller.setView(ViewMode.WEEK)
             }
         }
-        if (compact) {
-            val drawer = rememberDrawerState(DrawerValue.Closed)
-            val scope = rememberCoroutineScope()
-            PlatformBackHandler(drawer.isOpen) { scope.launch { drawer.close() } }
-            ModalNavigationDrawer(
-                drawerState = drawer,
-                gesturesEnabled = drawer.isOpen,
-                drawerContent = {
-                    ModalDrawerSheet(drawerContainerColor = colors.sidebar, modifier = Modifier.width(300.dp)) {
-                        Sidebar(controller, Modifier.statusBarsPadding(), compact = true, onNavigate = { scope.launch { drawer.close() } })
+        // Settings → Text size scales text everywhere (side panel included); grid zoom is separate.
+        val textScale = controller.textScale
+        val baseDensity = LocalDensity.current
+        CompositionLocalProvider(LocalDensity provides Density(baseDensity.density, baseDensity.fontScale * textScale)) {
+            if (compact) {
+                val drawer = rememberDrawerState(DrawerValue.Closed)
+                val scope = rememberCoroutineScope()
+                PlatformBackHandler(drawer.isOpen) { scope.launch { drawer.close() } }
+                ModalNavigationDrawer(
+                    drawerState = drawer,
+                    gesturesEnabled = drawer.isOpen,
+                    drawerContent = {
+                        ModalDrawerSheet(drawerContainerColor = colors.sidebar, modifier = Modifier.width(300.dp * textScale.coerceAtMost(1.25f))) {
+                            Sidebar(controller, Modifier.statusBarsPadding(), compact = true, onNavigate = { scope.launch { drawer.close() } })
+                        }
+                    },
+                ) {
+                    Column(Modifier.fillMaxSize().background(colors.background).safeDrawingPadding()) {
+                        TopBar(controller, compact = true, onMenu = { scope.launch { drawer.open() } })
+                        MainView(controller, compact = true, modifier = Modifier.weight(1f))
                     }
-                },
-            ) {
-                Column(Modifier.fillMaxSize().background(colors.background).safeDrawingPadding()) {
-                    TopBar(controller, compact = true, onMenu = { scope.launch { drawer.open() } })
-                    MainView(controller, compact = true, modifier = Modifier.weight(1f))
+                }
+            } else {
+                Row(Modifier.fillMaxSize()) {
+                    Sidebar(controller, Modifier.width(248.dp * textScale))
+                    Box(Modifier.fillMaxHeight().width(1.dp).background(colors.border))
+                    Column(Modifier.weight(1f).fillMaxHeight()) {
+                        TopBar(controller, compact = false, onMenu = null)
+                        MainView(controller, compact = false, modifier = Modifier.weight(1f))
+                    }
                 }
             }
-        } else {
-            Row(Modifier.fillMaxSize()) {
-                Sidebar(controller, Modifier.width(248.dp))
-                Box(Modifier.fillMaxHeight().width(1.dp).background(colors.border))
-                Column(Modifier.weight(1f).fillMaxHeight()) {
-                    TopBar(controller, compact = false, onMenu = null)
-                    MainView(controller, compact = false, modifier = Modifier.weight(1f))
-                }
-            }
+            EventEditorHost(controller, compact)
+            Toasts(controller, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 20.dp))
         }
-        EventEditorHost(controller, compact)
-        Toasts(controller, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 20.dp))
     }
 }
 

@@ -19,15 +19,26 @@ accounts. There is no server: each device signs in to Google itself.
   after a restart. Repeated edits to one event are combined, and an event created and deleted
   while offline never reaches Google. If Google rejects a queued change, the event goes back to
   how it was and a message says why.
+- **Guests**: see who's invited and their replies, add guests by email or remove them, and choose
+  whether Google emails them about a change (drags never email anyone). For invitations, answer
+  **Yes / No / Maybe** in the editor; the organiser is told. Invitations can't be moved, since
+  only the organiser can change them, but your colour and reminders are yours to set.
+- **Video calls**: a **Join** button for Google Meet, and for Zoom/Teams/Webex links found in the
+  location or description; add a Google Meet link to your own events with one click.
+- **Reminders** per event, as in Google Calendar: the calendar's defaults or your own times
+  (at start, 5 min … 1 day before).
 - **Event colours**: pick one of Google's 11 event colours (or the calendar's) in the editor;
   it's saved to Google, so Google Calendar shows it too.
 - **Zoom** the day/week grid: ⌘+ / ⌘− / ⌘0 or ⌘/Ctrl + scroll on Mac/Linux, pinch on the phone,
-  or Settings → Zoom. Remembered per device.
+  or Settings → Zoom. Remembered per device. This only changes the grid's hour height.
+- **Text size**: Settings → Text size (Small, Default, Large, Larger, Largest) scales text across
+  the app, side panel included; rows and the time grid grow to fit. Remembered per device.
 - **Mac menu bar**: your next event ("Software Roadmap · in 1h 25m", or "· now" just after it
   starts). Click it for the rest of today; pick one to open it. Closing the window keeps Calendar
   in the menu bar; quit from its menu or with ⌘Q, and click the Dock icon to bring it back.
-- **Phone reminders**: a notification before each timed event (Settings → Notify before events:
-  off, 5, 10, 15, 30 or 60 minutes; default 10). They arrive even if the app is closed: an hourly
+- **Phone reminders**: a notification before each timed event. By default it follows each event's
+  Google reminders (Settings → Notify before events: "As in Google"); or pick one time for all
+  events (5–60 minutes) or turn them off. Events with a video call get a **Join** button. They arrive even if the app is closed: an hourly
   background check refreshes the next two days, and reminders are re-armed after a restart.
   Tapping one opens the event. Hidden calendars don't notify.
 - Demo data (sidebar → Settings → Demo data) lets you try everything without a Google account;

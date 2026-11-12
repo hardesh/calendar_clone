@@ -92,7 +92,7 @@ internal fun AllDayRow(
         }
     }
     val laneCount = (items.maxOfOrNull { it.lane } ?: -1) + 1
-    val laneHeight = 22.dp
+    val laneHeight = 22.dp.scaled()
     val rowHeight = maxOf(28.dp, laneHeight * laneCount + 6.dp)
     var dragDays by remember { mutableStateOf<Pair<String, Int>?>(null) }
 

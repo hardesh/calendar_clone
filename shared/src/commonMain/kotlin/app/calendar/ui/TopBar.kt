@@ -43,7 +43,7 @@ fun TopBar(controller: CalendarController, compact: Boolean, onMenu: (() -> Unit
         else -> "$monthName ${ref.year}"
     }
     Row(
-        Modifier.fillMaxWidth().height(if (compact) 52.dp else 56.dp).padding(horizontal = if (compact) 6.dp else 16.dp),
+        Modifier.fillMaxWidth().height((if (compact) 52.dp else 56.dp).scaled()).padding(horizontal = if (compact) 6.dp else 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (onMenu != null) IconBtn(Icons.Default.Menu, "Menu", onMenu, size = 40.dp, tint = colors.text)

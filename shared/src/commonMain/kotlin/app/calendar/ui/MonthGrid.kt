@@ -101,14 +101,14 @@ fun MonthGridView(controller: CalendarController, compact: Boolean, modifier: Mo
         cells.map { list -> list.sortedWith(compareByDescending<CalEvent> { it.isAllDay }.thenBy { it.startIn(zone) }) }
     }
 
-    val headerHeight = 26.dp
-    val chipHeight = if (compact) 16.dp else 20.dp
+    val headerHeight = 26.dp.scaled()
+    val chipHeight = (if (compact) 16.dp else 20.dp).scaled()
     val chipGap = 2.dp
     var drag by remember { mutableStateOf<Triple<CalEvent, Offset, Int>?>(null) } // event, pointer, target cell
     var swipeOffset by remember { mutableFloatStateOf(0f) }
 
     Column(modifier.fillMaxSize().background(colors.background)) {
-        Row(Modifier.fillMaxWidth().height(28.dp)) {
+        Row(Modifier.fillMaxWidth().height(28.dp.scaled())) {
             for (i in 0 until 7) {
                 val dow = days[i].dayOfWeek
                 Text(
@@ -276,9 +276,9 @@ private fun MonthCell(
             )
             .padding(horizontal = 3.dp),
     ) {
-        Box(Modifier.fillMaxWidth().height(26.dp), contentAlignment = if (compact) Alignment.Center else Alignment.CenterEnd) {
+        Box(Modifier.fillMaxWidth().height(26.dp.scaled()), contentAlignment = if (compact) Alignment.Center else Alignment.CenterEnd) {
             Box(
-                Modifier.height(22.dp).widthIn(min = 22.dp).clip(CircleShape).background(if (isToday) colors.today else Color.Transparent)
+                Modifier.height(22.dp.scaled()).widthIn(min = 22.dp).clip(CircleShape).background(if (isToday) colors.today else Color.Transparent)
                     .padding(horizontal = if (isToday) 0.dp else 4.dp),
                 contentAlignment = Alignment.Center,
             ) {

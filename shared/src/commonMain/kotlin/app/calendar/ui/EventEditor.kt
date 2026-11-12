@@ -73,6 +73,7 @@ import app.calendar.logic.plusDays
 import app.calendar.logic.zoneAbbreviation
 import app.calendar.logic.zoneOrNull
 import app.calendar.model.CalEvent
+import app.calendar.model.meetingLink
 import app.calendar.model.EventColors
 import app.calendar.model.EventTiming
 import app.calendar.state.CalendarController
@@ -132,7 +133,10 @@ private fun ColumnScope.EditorContent(controller: CalendarController, draft: Cal
     val colors = LocalAppColors.current
     val zone = controller.primaryZone
     val calendar = controller.calendarOf(draft)
-    val editable = isNew || calendar?.readOnly == false
+    val original = controller.editor?.original
+    // Invitations: time and details belong to the organiser; your reply, colour and reminders are yours.
+    val editable = isNew || (original != null && controller.canEdit(original))
+    val personal = isNew || (original != null && controller.canEditPersonal(original))
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { if (isNew) runCatching { focus.requestFocus() } }
 
@@ -161,12 +165,18 @@ private fun ColumnScope.EditorContent(controller: CalendarController, draft: Cal
     val scroll = rememberScrollState()
     Column(Modifier.heightIn(max = 520.dp).verticalScroll(scroll), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         CalendarPicker(controller, draft, editable)
-        if (editable) ColorPicker(controller, draft)
+        if (personal) ColorPicker(controller, draft)
         TimingEditor(draft.timing, zone, editable) { t -> controller.updateDraft { it.copy(timing = t) } }
         SecondaryZoneTimes(controller, draft)
         if (draft.recurringEventId != null) {
             Text("Repeating event — changes apply to this occurrence only.", style = AppType.small, color = colors.textSecondary)
         }
+        VideoCallRow(controller, draft, editable)
+        if (!isNew && original != null && original.selfAttendee != null && !original.organizerSelf && personal) {
+            RsvpRow(controller, original)
+        }
+        GuestsSection(controller, draft, original, editable)
+        RemindersSection(controller, draft, personal)
         FieldBox("Location", draft.location ?: "", editable, singleLine = true) { v -> controller.updateDraft { it.copy(location = v.ifEmpty { null }) } }
         FieldBox("Description", draft.description ?: "", editable, singleLine = false) { v -> controller.updateDraft { it.copy(description = v.ifEmpty { null }) } }
     }
@@ -175,10 +185,11 @@ private fun ColumnScope.EditorContent(controller: CalendarController, draft: Cal
         if (!isNew && editable) {
             IconBtn(Icons.Default.Delete, "Delete event", { controller.delete(controller.editor!!.original!!) }, tint = colors.today)
         }
-        if (!editable) Text("This calendar is view only", style = AppType.small, color = colors.textSecondary)
+        if (!personal) Text("This calendar is view only", style = AppType.small, color = colors.textSecondary)
+        else if (!editable) Text("Organised by someone else", style = AppType.small, color = colors.textSecondary)
         Spacer(Modifier.weight(1f))
-        TextButton(onClick = { controller.closeEditor() }) { Text(if (editable) "Cancel" else "Close", color = colors.textSecondary) }
-        if (editable) {
+        TextButton(onClick = { controller.closeEditor() }) { Text(if (personal) "Cancel" else "Close", color = colors.textSecondary) }
+        if (personal) {
             Box(
                 Modifier
                     .clip(RoundedCornerShape(6.dp))
@@ -451,4 +462,215 @@ private fun FieldBox(placeholder: String, value: String, editable: Boolean, sing
             .background(colors.hover, RoundedCornerShape(6.dp))
             .padding(horizontal = 10.dp, vertical = 8.dp),
     )
+}
+
+
+// ---- video call -------------------------------------------------------------------
+
+@Composable
+private fun VideoCallRow(controller: CalendarController, draft: CalEvent, editable: Boolean) {
+    val colors = LocalAppColors.current
+    val uri = androidx.compose.ui.platform.LocalUriHandler.current
+    val link = draft.meetingLink()
+    val isGoogle = controller.accounts.firstOrNull { it.id == draft.accountId }?.provider == "google"
+    when {
+        link != null -> Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 6.dp)) {
+            Box(
+                Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(colors.accent)
+                    .clickable { runCatching { uri.openUri(link.url) } }
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+            ) {
+                Text("Join ${link.name}", style = AppType.bodyMedium, color = Color.White)
+            }
+            Text(
+                link.url.removePrefix("https://"),
+                style = AppType.small,
+                color = colors.textSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 10.dp),
+            )
+        }
+        draft.requestMeet -> Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 6.dp)) {
+            Text("A Google Meet link will be added when you save", style = AppType.small, color = colors.textSecondary, modifier = Modifier.weight(1f))
+            TextButton(onClick = { controller.updateDraft { it.copy(requestMeet = false) } }) { Text("Remove", color = colors.textSecondary) }
+        }
+        editable && isGoogle -> HoverRow(
+            onClick = { controller.updateDraft { it.copy(requestMeet = true) } },
+            modifier = Modifier.fillMaxWidth().height(30.dp),
+        ) {
+            Text("+ Add Google Meet video call", style = AppType.body, color = colors.accent, modifier = Modifier.padding(start = 6.dp))
+        }
+    }
+}
+
+// ---- reply to an invitation -----------------------------------------------------------
+
+@Composable
+private fun RsvpRow(controller: CalendarController, event: CalEvent) {
+    val colors = LocalAppColors.current
+    val current = event.selfAttendee?.status
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 6.dp)) {
+        Text("Going?", style = AppType.body, color = colors.textSecondary, modifier = Modifier.width(64.dp))
+        for ((status, label) in listOf("accepted" to "Yes", "declined" to "No", "tentative" to "Maybe")) {
+            val selected = current == status
+            Box(
+                Modifier
+                    .padding(end = 6.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(if (selected) colors.accent else colors.hover)
+                    .clickable { controller.respond(event, status) }
+                    .padding(horizontal = 12.dp, vertical = 5.dp),
+            ) {
+                Text(label, style = AppType.bodyMedium, color = if (selected) Color.White else colors.text)
+            }
+        }
+    }
+}
+
+// ---- guests -------------------------------------------------------------------------
+
+private val emailRegex = Regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$")
+
+@Composable
+private fun GuestsSection(controller: CalendarController, draft: CalEvent, original: CalEvent?, editable: Boolean) {
+    val colors = LocalAppColors.current
+    var input by remember(draft.key) { mutableStateOf("") }
+    val guests = draft.attendees
+    if (guests.isEmpty() && !editable) return
+    fun setGuests(list: List<app.calendar.model.Attendee>) =
+        controller.updateDraft { it.copy(attendees = list, notifyGuests = list != original?.attendees.orEmpty()) }
+    fun addFromInput() {
+        val emails = input.split(',', ';', ' ', '\n').map { it.trim() }.filter { emailRegex.matches(it) }
+        val existing = guests.map { it.email.lowercase() }.toSet()
+        val added = emails.filter { it.lowercase() !in existing }.distinct().map { app.calendar.model.Attendee(it) }
+        if (added.isNotEmpty()) setGuests(guests + added)
+        input = ""
+    }
+    Column(Modifier.padding(start = 6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        val going = guests.count { it.status == "accepted" }
+        Text(
+            if (guests.isEmpty()) "Guests" else "Guests · ${guests.size}" + if (going > 0) ", $going going" else "",
+            style = AppType.small, color = colors.textSecondary,
+        )
+        for (g in guests.sortedWith(compareByDescending<app.calendar.model.Attendee> { it.organizer }.thenBy { it.displayName.lowercase() })) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier.size(24.dp).clip(CircleShape).background(colors.hover),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(g.displayName.take(1).uppercase(), style = AppType.small, color = colors.text)
+                }
+                Column(Modifier.padding(start = 8.dp).weight(1f)) {
+                    Text(
+                        g.displayName + (if (g.self) " (you)" else ""),
+                        style = AppType.body, color = colors.text, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    )
+                    val details = listOfNotNull(
+                        if (g.organizer) "Organiser" else null,
+                        when (g.status) {
+                            "accepted" -> "Going"
+                            "declined" -> "Not going"
+                            "tentative" -> "Maybe"
+                            else -> "Awaiting reply"
+                        },
+                        if (g.optional) "Optional" else null,
+                        g.email.takeIf { g.name != null },
+                    )
+                    Text(details.joinToString(" · "), style = AppType.tiny, color = colors.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                if (editable && !g.self && !g.organizer) {
+                    IconBtn(Icons.Default.Close, "Remove ${g.email}", { setGuests(guests.filterNot { it.email == g.email }) }, size = 24.dp)
+                }
+            }
+        }
+        if (editable) {
+            BasicTextField(
+                value = input,
+                onValueChange = { v -> if (v.endsWith(",") || v.endsWith(" ")) { input = v; addFromInput() } else input = v },
+                singleLine = true,
+                textStyle = AppType.body.copy(color = colors.text),
+                cursorBrush = SolidColor(colors.accent),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done, keyboardType = androidx.compose.ui.text.input.KeyboardType.Email),
+                keyboardActions = KeyboardActions(onDone = { addFromInput() }),
+                decorationBox = { inner ->
+                    Box {
+                        if (input.isEmpty()) Text("Add guests by email", style = AppType.body, color = colors.textTertiary)
+                        inner()
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(colors.hover, RoundedCornerShape(6.dp))
+                    .padding(horizontal = 10.dp, vertical = 8.dp)
+                    .onPreviewKeyEvent {
+                        if (it.type == KeyEventType.KeyDown && it.key == Key.Enter && input.isNotBlank()) { addFromInput(); true } else false
+                    },
+            )
+            if (guests.isNotEmpty() || original?.attendees?.isNotEmpty() == true) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Email guests about changes", style = AppType.body, color = colors.text, modifier = Modifier.weight(1f))
+                    Toggle(draft.notifyGuests, { on -> controller.updateDraft { it.copy(notifyGuests = on) } })
+                }
+            }
+        }
+    }
+}
+
+// ---- reminders ------------------------------------------------------------------------
+
+private fun reminderLabel(m: Int): String = when {
+    m == 0 -> "At start"
+    m < 60 -> "$m min before"
+    m % 1440 == 0 -> (m / 1440).let { if (it == 1) "1 day before" else "$it days before" }
+    m % 60 == 0 -> (m / 60).let { if (it == 1) "1 hour before" else "$it hours before" }
+    else -> "${m / 60} h ${m % 60} min before"
+}
+
+@Composable
+private fun RemindersSection(controller: CalendarController, draft: CalEvent, editable: Boolean) {
+    val colors = LocalAppColors.current
+    if (draft.isAllDay && draft.reminders == null) return
+    val defaults = controller.calendarOf(draft)?.defaultReminders.orEmpty()
+    val usesDefault = draft.reminders == null || draft.reminders.useDefault
+    val effective = if (usesDefault) defaults else draft.reminders!!.minutes
+    var open by remember { mutableStateOf(false) }
+    fun set(list: List<Int>) = controller.updateDraft { it.copy(reminders = app.calendar.model.EventReminders(false, list.distinct().sorted())) }
+    Column(Modifier.padding(start = 6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("Reminders" + if (usesDefault) " · calendar default" else "", style = AppType.small, color = colors.textSecondary)
+        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (effective.isEmpty()) Text("None", style = AppType.body, color = colors.textTertiary, modifier = Modifier.padding(vertical = 4.dp))
+            for (m in effective) {
+                Row(
+                    Modifier.clip(RoundedCornerShape(6.dp)).background(colors.hover).padding(start = 9.dp, end = if (editable) 2.dp else 9.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(reminderLabel(m), style = AppType.body, color = colors.text, modifier = Modifier.padding(vertical = 5.dp))
+                    if (editable) IconBtn(Icons.Default.Close, "Remove reminder", { set(effective - m) }, size = 22.dp)
+                }
+            }
+            if (editable && effective.size < 5) {
+                Box {
+                    HoverRow(onClick = { open = true }, modifier = Modifier.height(30.dp)) {
+                        Text("+ Add", style = AppType.body, color = colors.accent, modifier = Modifier.padding(horizontal = 8.dp))
+                    }
+                    DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                        for (m in listOf(0, 5, 10, 15, 30, 60, 120, 1440).filter { it !in effective }) {
+                            DropdownMenuItem(text = { Text(reminderLabel(m)) }, onClick = { open = false; set(effective + m) })
+                        }
+                    }
+                }
+            }
+        }
+        if (editable && !usesDefault && defaults.isNotEmpty()) {
+            Text(
+                "Use calendar default (${defaults.joinToString { reminderLabel(it) }})",
+                style = AppType.small,
+                color = colors.accent,
+                modifier = Modifier.clickable { controller.updateDraft { it.copy(reminders = app.calendar.model.EventReminders(true)) } },
+            )
+        }
+    }
 }
