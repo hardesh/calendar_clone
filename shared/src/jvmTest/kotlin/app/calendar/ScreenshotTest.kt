@@ -58,8 +58,8 @@ class ScreenshotTest {
 
     @Test
     fun renderScreens() {
-        shoot("desktop-3day-light", ViewMode.THREE_DAY, 1280, 840, dark = false)
-        shoot("desktop-3day-dark", ViewMode.THREE_DAY, 1280, 840, dark = true)
+        shoot("desktop-week-light", ViewMode.WEEK, 1280, 840, dark = false)
+        shoot("desktop-week-dark", ViewMode.WEEK, 1280, 840, dark = true)
         shoot("desktop-day-light", ViewMode.DAY, 1280, 840, dark = false)
         shoot("desktop-month-light", ViewMode.MONTH, 1280, 840, dark = false)
         shoot("desktop-month-dark", ViewMode.MONTH, 1280, 840, dark = true)

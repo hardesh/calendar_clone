@@ -33,7 +33,15 @@ fun TopBar(controller: CalendarController, compact: Boolean, onMenu: (() -> Unit
     val days = controller.visibleDays()
     val ref = if (controller.viewMode == ViewMode.MONTH) controller.anchor else days.first()
     val monthName = ref.month.name.lowercase().replaceFirstChar { it.uppercase() }
-    val title = if (compact) "${monthName.take(3)} ${ref.year}" else "$monthName ${ref.year}"
+    val last = days.last()
+    val spansMonths = controller.viewMode != ViewMode.MONTH && last.month != ref.month
+    fun short(m: kotlinx.datetime.Month) = m.name.take(3).lowercase().replaceFirstChar { it.uppercase() }
+    val title = when {
+        spansMonths && last.year != ref.year -> "${short(ref.month)} ${ref.year} – ${short(last.month)} ${last.year}"
+        spansMonths -> "${short(ref.month)} – ${short(last.month)} ${ref.year}"
+        compact -> "${short(ref.month)} ${ref.year}"
+        else -> "$monthName ${ref.year}"
+    }
     Row(
         Modifier.fillMaxWidth().height(if (compact) 52.dp else 56.dp).padding(horizontal = if (compact) 6.dp else 16.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -42,7 +50,13 @@ fun TopBar(controller: CalendarController, compact: Boolean, onMenu: (() -> Unit
         Text(title, style = AppType.title, color = colors.text, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 4.dp))
         if (controller.offline) {
             Text(
-                if (compact) "Offline" else "Offline · showing saved events",
+                when {
+                    controller.pendingChanges > 0 && compact -> "Offline · ${controller.pendingChanges}"
+                    controller.pendingChanges == 1 -> "Offline · 1 change waiting to sync"
+                    controller.pendingChanges > 1 -> "Offline · ${controller.pendingChanges} changes waiting to sync"
+                    compact -> "Offline"
+                    else -> "Offline · showing saved events"
+                },
                 style = AppType.small,
                 color = colors.textSecondary,
                 maxLines = 1,
@@ -68,10 +82,15 @@ fun TopBar(controller: CalendarController, compact: Boolean, onMenu: (() -> Unit
         }
         Spacer(Modifier.width(8.dp))
         Segmented(
-            options = ViewMode.entries.toList(),
+            options = viewOptions(compact),
             selected = controller.viewMode,
             label = { if (compact) it.shortLabel else it.label },
             onSelect = { controller.setView(it) },
         )
     }
 }
+
+/** Phones get a 3-day view; wider screens (Mac, Linux) get a full week instead. */
+fun viewOptions(compact: Boolean): List<ViewMode> =
+    if (compact) listOf(ViewMode.DAY, ViewMode.THREE_DAY, ViewMode.MONTH)
+    else listOf(ViewMode.DAY, ViewMode.WEEK, ViewMode.MONTH)

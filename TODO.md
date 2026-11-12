@@ -12,9 +12,10 @@ Deferred features, with what the current code already provides for each.
   Provided: `CalendarProvider` interface; Google and demo data are two implementations already.
 - [x] **Offline viewing and instant start**: last-known calendars and events are cached per
   device (`EventCache`) and refreshed in the background.
-- [ ] **Offline edits** (queue drags/edits made offline and send them when back online).
-  Provided: edits go through one optimistic `mutate()` path in `CalendarController`, and the
-  cache already stores the optimistic result.
+- [x] **Offline edits**: every change goes through a saved outbox (`OutboxOp`) that is sent in
+  order when online, merged per event, and survives restarts.
+- [ ] **Conflict handling** for offline edits to events that also changed on another device
+  (today the last change sent wins).
 - [ ] **Edit all events in a repeating series** (ask "this event / all events" on drag or save).
   Provided: `recurringEventId` is kept on every instance.
 - [ ] **iOS app**.
@@ -27,7 +28,7 @@ Deferred features, with what the current code already provides for each.
 - [ ] Undo for drags (toast with an "Undo" button).
 - [ ] Drag an all-day event into the time grid to give it a time (and back).
 - [ ] Pinch or ⌘-scroll to change the hour height.
-- [ ] Week view and a configurable number of days.
+- [ ] Configurable number of days (e.g. 5-day work week); today: Day/Week/Month on desktop, Day/3 days/Month on phone.
 - [ ] Attendees, video-call links, reminders and event colours in the editor.
 - [ ] Push updates from Google instead of the 5-minute refresh.
 - [ ] Bundle the Inter font for an even closer Notion look.

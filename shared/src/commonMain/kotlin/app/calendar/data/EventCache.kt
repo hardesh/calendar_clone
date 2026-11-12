@@ -27,7 +27,7 @@ class InMemoryFileCache : FileCache {
 }
 
 @Serializable
-private data class CachedEvent(
+internal data class CachedEvent(
     val a: String,
     val c: String,
     val id: String,
@@ -98,6 +98,20 @@ class EventCache(private val files: FileCache, private val maxWindows: Int = 36)
         runCatching { files.write(CALENDARS, json.encodeToString(CachedCalendars.serializer(), CachedCalendars(calendars = list))) }
     }
 
+    /** Changes not yet sent to Google (demo-account changes are not kept across restarts). */
+    fun loadOutbox(): List<OutboxOp> = runCatching {
+        val text = files.read(OUTBOX) ?: return emptyList()
+        json.decodeFromString(CachedOutbox.serializer(), text).ops.mapNotNull { it.toOp() }
+    }.getOrDefault(emptyList())
+
+    fun saveOutbox(ops: List<OutboxOp>) {
+        val list = ops.filter { (it.before ?: it.after)?.accountId != DEMO_ACCOUNT }.map { it.toCached() }
+        runCatching {
+            if (list.isEmpty()) files.delete(OUTBOX)
+            else files.write(OUTBOX, json.encodeToString(CachedOutbox.serializer(), CachedOutbox(ops = list)))
+        }
+    }
+
     /** Forget everything, e.g. after an account is removed. */
     fun clear() {
         files.list().forEach { files.delete(it) }
@@ -108,14 +122,21 @@ class EventCache(private val files: FileCache, private val maxWindows: Int = 36)
         if (windows.size > maxWindows) windows.take(windows.size - maxWindows).forEach { files.delete(it) }
     }
 
-    private fun CalEvent.toCached(): CachedEvent = when (val t = timing) {
+    companion object {
+        private const val CALENDARS = "calendars.json"
+        private const val OUTBOX = "outbox.json"
+        private const val DEMO_ACCOUNT = "demo"
+    }
+}
+
+internal fun CalEvent.toCached(): CachedEvent = when (val t = timing) {
         is EventTiming.Timed -> CachedEvent(accountId, calendarId, id, title, s = t.start.toEpochMilliseconds(), e = t.end.toEpochMilliseconds(),
             loc = location, desc = description, rec = recurringEventId, col = colorOverride)
         is EventTiming.AllDay -> CachedEvent(accountId, calendarId, id, title, ds = t.start.toString(), de = t.endExclusive.toString(),
             loc = location, desc = description, rec = recurringEventId, col = colorOverride)
     }
 
-    private fun CachedEvent.toEvent(): CalEvent? {
+internal fun CachedEvent.toEvent(): CalEvent? {
         val timing = when {
             s != null && e != null -> EventTiming.Timed(Instant.fromEpochMilliseconds(s), Instant.fromEpochMilliseconds(e))
             ds != null && de != null -> EventTiming.AllDay(LocalDate.parse(ds), LocalDate.parse(de))
@@ -124,8 +145,23 @@ class EventCache(private val files: FileCache, private val maxWindows: Int = 36)
         return CalEvent(a, c, id, t, timing, loc, desc, rec, col)
     }
 
-    companion object {
-        private const val CALENDARS = "calendars.json"
-        private const val DEMO_ACCOUNT = "demo"
-    }
+/**
+ * One change waiting to be sent to Google. [before] is the event as Google has it
+ * (null for a new event); [after] is what the user wants (null for a delete).
+ */
+data class OutboxOp(val id: Long, val kind: Kind, val before: CalEvent?, val after: CalEvent?) {
+    enum class Kind { CREATE, UPDATE, MOVE, DELETE }
+}
+
+@Serializable
+private data class CachedOp(val id: Long, val k: String, val b: CachedEvent? = null, val a: CachedEvent? = null)
+
+@Serializable
+private data class CachedOutbox(val v: Int = 1, val ops: List<CachedOp>)
+
+private fun OutboxOp.toCached() = CachedOp(id, kind.name, before?.toCached(), after?.toCached())
+
+private fun CachedOp.toOp(): OutboxOp? {
+    val kind = OutboxOp.Kind.entries.firstOrNull { it.name == k } ?: return null
+    return OutboxOp(id, kind, b?.toEvent(), a?.toEvent())
 }

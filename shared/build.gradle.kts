@@ -1,3 +1,4 @@
+import java.time.Duration
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -57,4 +58,10 @@ kotlin {
             implementation(libs.kotlinx.coroutines.swing)
         }
     }
+}
+
+tasks.withType<Test>().configureEach {
+    // Keep the test JVM out of the macOS Dock (UI tests start AWT), and never hang forever.
+    jvmArgs("-Dapple.awt.UIElement=true")
+    timeout.set(Duration.ofMinutes(5))
 }

@@ -4,7 +4,7 @@ A personal calendar in the style of Notion Calendar, for **macOS**, **Linux** an
 Kotlin Multiplatform and Compose Multiplatform. It connects directly to one or more Google
 accounts. There is no server: each device signs in to Google itself.
 
-- Views: **1 day**, **3 days**, **month**
+- Views: **day**, **week** and **month** on Mac/Linux; **1 day**, **3 days** and **month** on the phone
 - **Drag to edit**: move events, resize them from the top or bottom edge, drag on empty space to
   create, and drag chips between days in month view. On the phone, **long-press** first, then drag
   (a plain swipe scrolls, and a sideways swipe moves to the next or previous days).
@@ -14,8 +14,11 @@ accounts. There is no server: each device signs in to Google itself.
   the event moves back and a message says why.
 - **Opens instantly and works offline**: the last-known calendars and events are saved on each
   device, shown at start and refreshed from Google in the background. Without a connection you
-  can still browse the months you've seen ("Offline" appears next to the title); it reconnects on
-  its own. Edits need a connection for now.
+  can still browse the months you've seen ("Offline" appears next to the title) and keep editing:
+  changes are saved on the device and sent to Google in order once you're back online, even
+  after a restart. Repeated edits to one event are combined, and an event created and deleted
+  while offline never reaches Google. If Google rejects a queued change, the event goes back to
+  how it was and a message says why.
 - Demo data (sidebar → Settings → Demo data) lets you try everything without a Google account.
 
 ## Download
@@ -103,7 +106,7 @@ Apple-silicon `.dmg` and an amd64 `.deb`.
 
 | Key | Action |
 |---|---|
-| `D` or `1` / `3` / `M` | Day / 3 days / Month |
+| `D` or `1` / `W` or `7` / `M` | Day / Week / Month |
 | `T` | Today |
 | `←` `→` (or `J` `K`) | Previous / next |
 | `Esc` | Cancel a drag in progress, or close the editor |

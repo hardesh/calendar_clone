@@ -95,6 +95,13 @@ fun CalendarScreen(controller: CalendarController) {
             .focusable(),
     ) {
         val compact = maxWidth < 720.dp
+        // Swap 3 days ↔ week to suit the screen (e.g. a setting carried over from another size).
+        LaunchedEffect(compact, controller.viewMode) {
+            when {
+                compact && controller.viewMode == ViewMode.WEEK -> controller.setView(ViewMode.THREE_DAY)
+                !compact && controller.viewMode == ViewMode.THREE_DAY -> controller.setView(ViewMode.WEEK)
+            }
+        }
         if (compact) {
             val drawer = rememberDrawerState(DrawerValue.Closed)
             val scope = rememberCoroutineScope()
@@ -167,7 +174,7 @@ private fun handleShortcut(controller: CalendarController, e: KeyEvent): Boolean
         mod && e.key == Key.R -> controller.refresh()
         mod -> return false
         e.key == Key.D || e.key == Key.One -> controller.setView(ViewMode.DAY)
-        e.key == Key.Three -> controller.setView(ViewMode.THREE_DAY)
+        e.key == Key.W || e.key == Key.Seven || e.key == Key.Three -> controller.setView(ViewMode.WEEK)
         e.key == Key.M -> controller.setView(ViewMode.MONTH)
         e.key == Key.T -> controller.goToday()
         e.key == Key.DirectionLeft || e.key == Key.J -> controller.page(-1)

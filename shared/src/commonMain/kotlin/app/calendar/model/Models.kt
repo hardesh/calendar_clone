@@ -69,6 +69,7 @@ data class CalEvent(
 enum class ViewMode(val dayCount: Int, val label: String, val shortLabel: String) {
     DAY(1, "Day", "1D"),
     THREE_DAY(3, "3 days", "3D"),
+    WEEK(7, "Week", "7D"),
     MONTH(0, "Month", "M"),
 }
 

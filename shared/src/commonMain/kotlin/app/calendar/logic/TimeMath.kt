@@ -37,6 +37,7 @@ const val MONTH_GRID_DAYS = 42
 
 fun visibleDays(mode: ViewMode, anchor: LocalDate, weekStart: DayOfWeek): List<LocalDate> = when (mode) {
     ViewMode.DAY, ViewMode.THREE_DAY -> List(mode.dayCount) { anchor.plusDays(it) }
+    ViewMode.WEEK -> startOfWeek(anchor, weekStart).let { start -> List(7) { start.plusDays(it) } }
     ViewMode.MONTH -> {
         val start = monthGridStart(anchor, weekStart)
         List(MONTH_GRID_DAYS) { start.plusDays(it) }
@@ -46,6 +47,7 @@ fun visibleDays(mode: ViewMode, anchor: LocalDate, weekStart: DayOfWeek): List<L
 fun pageAnchor(mode: ViewMode, anchor: LocalDate, direction: Int): LocalDate = when (mode) {
     ViewMode.DAY -> anchor.plusDays(direction)
     ViewMode.THREE_DAY -> anchor.plusDays(3 * direction)
+    ViewMode.WEEK -> anchor.plusDays(7 * direction)
     ViewMode.MONTH -> {
         val first = LocalDate(anchor.year, anchor.month, 1)
         first.plus(direction, DateTimeUnit.MONTH)

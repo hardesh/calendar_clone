@@ -9,6 +9,7 @@ import androidx.compose.runtime.setValue
 import app.calendar.data.CalendarProvider
 import app.calendar.data.EventCache
 import app.calendar.data.InMemoryFileCache
+import app.calendar.data.OutboxOp
 import app.calendar.logic.MONTH_GRID_DAYS
 import app.calendar.logic.dateSpan
 import app.calendar.logic.monthGridStart
@@ -39,7 +40,6 @@ import kotlinx.datetime.TimeZone
 import kotlinx.datetime.atStartOfDayIn
 import kotlinx.datetime.toLocalDateTime
 import kotlin.time.Clock
-import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
@@ -102,9 +102,18 @@ class CalendarController(
     var offline by mutableStateOf(false)
         private set
 
-    /** Mutations not yet confirmed by the server; re-applied over freshly loaded windows. */
-    private val pending = LinkedHashMap<Long, Pair<CalEvent?, CalEvent?>>()
-    private var nextPendingId = 0L
+    /**
+     * Changes not yet confirmed by Google, oldest first, saved so they survive restarts and
+     * offline periods. Their effect is re-applied over freshly loaded or cached windows.
+     */
+    private val outbox = ArrayList<OutboxOp>(cache.loadOutbox())
+    private var inFlightOp: Long? = null
+    private var flushing = false
+    private var nextOpId = clock().toEpochMilliseconds() * 1000
+    private var warnedOffline = false
+    /** Number of changes waiting to be sent to Google. */
+    var pendingChanges by mutableIntStateOf(outbox.size)
+        private set
 
     // ---- UI chrome ----------------------------------------------------------------
     val toasts = mutableStateListOf<Toast>()
@@ -141,11 +150,18 @@ class CalendarController(
         scope.launch {
             reloadAccounts()
             ensureLoaded()
+            // Every 30 s: while offline, try to reconnect (and then send queued changes);
+            // otherwise refresh events every 5 minutes.
+            var ticks = 0
             while (true) {
-                // Check back sooner while offline, so data refreshes soon after the connection returns.
-                delay(if (offline) 30.seconds else 5.minutes)
-                if (offline) reloadAccounts()
-                refreshEvents(showErrors = false)
+                delay(30.seconds)
+                ticks++
+                if (offline) {
+                    reloadAccounts()
+                    if (!offline) refreshEvents(showErrors = false)
+                } else if (ticks % 10 == 0) {
+                    refreshEvents(showErrors = false)
+                }
             }
         }
     }
@@ -165,7 +181,7 @@ class CalendarController(
             val cached = cache.loadWindow(weekStart, w) ?: continue
             val ids = calendars.map { it.key }.toSet()
             var list = cached.filter { it.calendarKey in ids }
-            for ((old, new) in pending.values) list = applyEdit(list, old, new, w)
+            for (op in outbox) list = applyEdit(list, op.before, op.after, w)
             windows[w] = list
         }
     }
@@ -205,6 +221,7 @@ class CalendarController(
         applyDefaultVisibility(cals)
         calendars = cals
         if (networkFailures == 0) cache.saveCalendars(cals)
+        if (!offline) flush()
         println("[calendar] accounts=${list.map { it.provider }} calendars=${cals.size} hidden=${hidden.size} demo=$demoEnabled")
     }
 
@@ -353,7 +370,9 @@ class CalendarController(
         scope.launch {
             providerFor(account.id)?.removeAccount(account)
             accountErrors.remove(account.id)
+            outbox.removeAll { (it.before ?: it.after)?.accountId == account.id }
             cache.clear()
+            saveOutbox()
             clearWindows()
             calendars = emptyList()
             reloadAccounts()
@@ -426,10 +445,11 @@ class CalendarController(
             // For calendars that couldn't be fetched, keep what we had (memory, else cache).
             val previous = windows[start] ?: cache.loadWindow(weekStart, start).orEmpty()
             var list = events + previous.filter { it.calendarKey in failed }
-            for ((old, new) in pending.values) list = applyEdit(list, old, new, start)
+            for (op in outbox) list = applyEdit(list, op.before, op.after, start)
             windows[start] = list
             if (failed.isEmpty()) freshWindows += start
             if (networkFailures > 0 || reached > 0) offline = networkFailures > 0 && reached == 0
+            if (!offline) flush()
             cache.saveWindow(weekStart, start, list, clock())
             println("[calendar] loaded $start: ${list.size} events from ${cals.size} calendars, ${failed.size} failed (${networkFailures} network), offline=$offline")
             errors.forEach { println("[calendar] load error: $it") }
@@ -477,25 +497,125 @@ class CalendarController(
         }
     }
 
+    private fun newOpId() = nextOpId++
+
+    private fun saveOutbox() {
+        cache.saveOutbox(outbox)
+        pendingChanges = outbox.size
+        if (offline && outbox.isEmpty()) warnedOffline = false
+    }
+
     /**
-     * Shows [optimistic] at once, runs [remote], then swaps in the server's version.
-     * On failure restores [original] and shows a toast.
+     * Records a change: shows it at once, queues it (merging with a queued change to the same
+     * event) and sends the queue unless offline.
      */
-    private fun mutate(original: CalEvent?, optimistic: CalEvent?, remote: suspend () -> CalEvent?) {
-        applyLocal(original, optimistic)
-        val id = nextPendingId++
-        pending[id] = original to optimistic
+    private fun enqueue(op: OutboxOp) {
+        applyLocal(op.before, op.after)
+        val key = op.before?.key
+        val i = if (key == null) -1 else outbox.indexOfFirst { it.id != inFlightOp && it.after?.key == key }
+        if (i >= 0) {
+            val merged = merge(outbox[i], op)
+            if (merged == null) outbox.removeAt(i) else outbox[i] = merged
+        } else {
+            outbox += op
+        }
+        saveOutbox()
+        if (offline) {
+            if (!warnedOffline) {
+                warnedOffline = true
+                toast("You're offline. Changes are saved and will sync when you're back online.")
+            }
+        } else {
+            flush()
+        }
+    }
+
+    /** Combines a queued change with a newer change to the same event; null means "nothing left to send". */
+    private fun merge(existing: OutboxOp, new: OutboxOp): OutboxOp? = when (existing.kind) {
+        OutboxOp.Kind.CREATE ->
+            if (new.kind == OutboxOp.Kind.DELETE) null
+            else existing.copy(after = new.after!!.copy(id = existing.after!!.id))
+        else -> {
+            val server = existing.before!!
+            if (new.kind == OutboxOp.Kind.DELETE) {
+                OutboxOp(existing.id, OutboxOp.Kind.DELETE, server, null)
+            } else {
+                val after = new.after!!
+                val kind = if (after.calendarKey == server.calendarKey) OutboxOp.Kind.UPDATE else OutboxOp.Kind.MOVE
+                OutboxOp(existing.id, kind, server, after)
+            }
+        }
+    }
+
+    /** Sends queued changes in order. Stops (keeping the rest) when the network is unreachable. */
+    private fun flush() {
+        if (flushing || outbox.isEmpty()) return
+        flushing = true
         scope.launch {
             try {
-                val saved = remote()
-                pending.remove(id)
-                applyLocal(optimistic, saved)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                pending.remove(id)
-                applyLocal(optimistic, original)
-                toast("Couldn't save: ${errorText(e)}")
+                while (true) {
+                    val op = outbox.firstOrNull() ?: break
+                    inFlightOp = op.id
+                    val saved: CalEvent?
+                    try {
+                        saved = execute(op)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        inFlightOp = null
+                        if (isNetworkError(e)) {
+                            offline = true
+                            if (!warnedOffline) {
+                                warnedOffline = true
+                                toast("You're offline. Changes are saved and will sync when you're back online.")
+                            }
+                            break
+                        }
+                        // Google refused it: drop it and put the event back the way Google has it.
+                        outbox.remove(op)
+                        saveOutbox()
+                        applyLocal(op.after, op.before)
+                        toast("Couldn't save: ${errorText(e)}")
+                        continue
+                    }
+                    inFlightOp = null
+                    outbox.remove(op)
+                    // Later queued changes may refer to the event as we showed it (e.g. a temporary id).
+                    val shown = op.after
+                    if (shown != null && saved != null) {
+                        for (j in outbox.indices) {
+                            val o = outbox[j]
+                            outbox[j] = o.copy(
+                                before = if (o.before?.key == shown.key) saved else o.before,
+                                after = if (o.after?.id == shown.id && o.after.accountId == shown.accountId) o.after.copy(id = saved.id) else o.after,
+                            )
+                        }
+                    }
+                    saveOutbox()
+                    applyLocal(op.after, saved)
+                }
+            } finally {
+                inFlightOp = null
+                flushing = false
+            }
+        }
+    }
+
+    private suspend fun execute(op: OutboxOp): CalEvent? {
+        val ref = op.before ?: op.after!!
+        val provider = providerFor(ref.accountId) ?: throw IllegalStateException("That account is no longer connected")
+        fun calendarFor(e: CalEvent) = calendars.firstOrNull { it.key == e.calendarKey }
+            ?: CalendarInfo(e.accountId, e.calendarId, e.calendarId, 0, readOnly = false, primary = false)
+        return when (op.kind) {
+            OutboxOp.Kind.CREATE -> provider.create(calendarFor(op.after!!), op.after.fields())
+            OutboxOp.Kind.UPDATE -> provider.update(op.before!!, op.after!!.fields())
+            OutboxOp.Kind.MOVE -> {
+                val moved = provider.moveToCalendar(op.before!!, calendarFor(op.after!!))
+                provider.update(moved, op.after.fields())
+            }
+            OutboxOp.Kind.DELETE -> {
+                provider.delete(op.before!!)
+                null
             }
         }
     }
@@ -503,18 +623,13 @@ class CalendarController(
     /** Called when a drag finishes. */
     fun changeTiming(event: CalEvent, timing: EventTiming) {
         if (timing == event.timing || !canEdit(event)) return
-        val provider = providerFor(event.accountId) ?: return
-        val updated = event.copy(timing = timing)
-        mutate(event, updated) { provider.update(event, updated.fields()) }
+        enqueue(OutboxOp(newOpId(), OutboxOp.Kind.UPDATE, event, event.copy(timing = timing)))
     }
 
     fun delete(event: CalEvent) {
-        val provider = providerFor(event.accountId) ?: return
+        if (providerFor(event.accountId) == null) return
         editor = null
-        mutate(event, null) {
-            provider.delete(event)
-            null
-        }
+        enqueue(OutboxOp(newOpId(), OutboxOp.Kind.DELETE, event, null))
     }
 
     // ---- editor -----------------------------------------------------------------
@@ -555,25 +670,18 @@ class CalendarController(
         settings.defaultCalendar = target.key
         val original = state.original
         when {
-            original == null -> {
-                val temp = draft.copy(id = "local-${nextPendingId}")
-                mutate(null, temp) { provider.create(target, draft.fields()) }
-            }
+            original == null ->
+                enqueue(OutboxOp(newOpId(), OutboxOp.Kind.CREATE, null, draft.copy(id = "local-${newOpId()}")))
             original.calendarKey == draft.calendarKey -> {
                 if (original == draft) return
-                mutate(original, draft) { provider.update(original, draft.fields()) }
+                enqueue(OutboxOp(newOpId(), OutboxOp.Kind.UPDATE, original, draft))
             }
-            original.accountId == draft.accountId -> mutate(original, draft) {
-                val moved = provider.moveToCalendar(original, target)
-                provider.update(moved, draft.fields())
-            }
+            original.accountId == draft.accountId ->
+                enqueue(OutboxOp(newOpId(), OutboxOp.Kind.MOVE, original, draft))
             else -> {
-                val oldProvider = providerFor(original.accountId) ?: return
-                mutate(original, draft) {
-                    val created = provider.create(target, draft.fields())
-                    oldProvider.delete(original)
-                    created
-                }
+                // Another account: create it there, then delete the original.
+                enqueue(OutboxOp(newOpId(), OutboxOp.Kind.CREATE, null, draft.copy(id = "local-${newOpId()}")))
+                enqueue(OutboxOp(newOpId(), OutboxOp.Kind.DELETE, original, null))
             }
         }
     }

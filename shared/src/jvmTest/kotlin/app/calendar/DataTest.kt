@@ -228,11 +228,27 @@ private class FakeGoogle(zone: TimeZone) : app.calendar.data.CalendarProvider {
     override suspend fun addAccount() = account
     override suspend fun removeAccount(account: app.calendar.model.Account) {}
     override suspend fun calendars(account: app.calendar.model.Account): List<CalendarInfo> { kotlinx.coroutines.delay(300); failWith?.let { throw it }; return listOf(cal) }
-    override suspend fun events(calendar: CalendarInfo, from: Instant, to: Instant): List<CalEvent> { kotlinx.coroutines.delay(500); failWith?.let { throw it }; return listOf(event) }
-    override suspend fun create(calendar: CalendarInfo, fields: EventFields) = error("unused")
-    override suspend fun update(original: CalEvent, fields: EventFields) = error("unused")
+    /** What "Google" has stored, so created/updated/deleted events persist like the real thing. */
+    private val stored = linkedMapOf(event.id to event)
+    override suspend fun events(calendar: CalendarInfo, from: Instant, to: Instant): List<CalEvent> { kotlinx.coroutines.delay(500); failWith?.let { throw it }; return stored.values.toList() }
+    /** Calls that reached "Google", in order, e.g. "update g1". */
+    val calls = mutableListOf<String>()
+    private var nextId = 100
+    override suspend fun create(calendar: CalendarInfo, fields: EventFields): CalEvent {
+        kotlinx.coroutines.delay(200); failWith?.let { throw it }
+        val e = CalEvent(account.id, calendar.id, "g${nextId++}", fields.title, fields.timing)
+        calls += "create ${e.id} ${fields.title}"; stored[e.id] = e; return e
+    }
+    override suspend fun update(original: CalEvent, fields: EventFields): CalEvent {
+        kotlinx.coroutines.delay(200); failWith?.let { throw it }
+        calls += "update ${original.id} ${fields.title}"
+        return original.copy(title = fields.title, timing = fields.timing).also { stored[it.id] = it }
+    }
     override suspend fun moveToCalendar(event: CalEvent, target: CalendarInfo) = error("unused")
-    override suspend fun delete(event: CalEvent) {}
+    override suspend fun delete(event: CalEvent) {
+        kotlinx.coroutines.delay(200); failWith?.let { throw it }
+        calls += "delete ${event.id}"; stored.remove(event.id)
+    }
 }
 
 class DemoToggleTest {
@@ -255,7 +271,7 @@ class DemoToggleTest {
 
     @Test
     fun googleEventsShowWithDemoOff() = kotlinx.coroutines.test.runTest {
-        val scope = CoroutineScope(coroutineContext + kotlinx.coroutines.SupervisorJob())
+        val scope = CoroutineScope(backgroundScope.coroutineContext + kotlinx.coroutines.SupervisorJob(backgroundScope.coroutineContext[kotlinx.coroutines.Job]))
         val c = controller(demo = false, scope)
         c.start()
         testScheduler.advanceTimeBy(5_000)
@@ -266,7 +282,7 @@ class DemoToggleTest {
 
     @Test
     fun turningDemoOffKeepsGoogleEvents() = kotlinx.coroutines.test.runTest {
-        val scope = CoroutineScope(coroutineContext + kotlinx.coroutines.SupervisorJob())
+        val scope = CoroutineScope(backgroundScope.coroutineContext + kotlinx.coroutines.SupervisorJob(backgroundScope.coroutineContext[kotlinx.coroutines.Job]))
         val c = controller(demo = true, scope)
         c.start()
         testScheduler.advanceTimeBy(5_000)
@@ -314,13 +330,13 @@ class CacheTest {
     @Test
     fun showsCachedEventsBeforeNetworkAnswers() = kotlinx.coroutines.test.runTest {
         val files = app.calendar.data.InMemoryFileCache()
-        val scope1 = CoroutineScope(coroutineContext + kotlinx.coroutines.SupervisorJob())
+        val scope1 = CoroutineScope(backgroundScope.coroutineContext + kotlinx.coroutines.SupervisorJob(backgroundScope.coroutineContext[kotlinx.coroutines.Job]))
         controller(FakeGoogle(zone), files, scope1).also { it.start() }
         testScheduler.advanceTimeBy(5_000)
         scope1.coroutineContext[kotlinx.coroutines.Job]!!.cancel()
 
         // Next launch: cached events are there immediately, before any network call returns.
-        val scope2 = CoroutineScope(coroutineContext + kotlinx.coroutines.SupervisorJob())
+        val scope2 = CoroutineScope(backgroundScope.coroutineContext + kotlinx.coroutines.SupervisorJob(backgroundScope.coroutineContext[kotlinx.coroutines.Job]))
         val c = controller(FakeGoogle(zone), files, scope2)
         c.start()
         assertTrue("Real meeting" in c.titles(), c.titles().toString())
@@ -331,13 +347,13 @@ class CacheTest {
     @Test
     fun offlineKeepsCachedEventsAndRecovers() = kotlinx.coroutines.test.runTest {
         val files = app.calendar.data.InMemoryFileCache()
-        val scope1 = CoroutineScope(coroutineContext + kotlinx.coroutines.SupervisorJob())
+        val scope1 = CoroutineScope(backgroundScope.coroutineContext + kotlinx.coroutines.SupervisorJob(backgroundScope.coroutineContext[kotlinx.coroutines.Job]))
         controller(FakeGoogle(zone), files, scope1).also { it.start() }
         testScheduler.advanceTimeBy(5_000)
         scope1.coroutineContext[kotlinx.coroutines.Job]!!.cancel()
 
         val google = FakeGoogle(zone).apply { failWith = java.net.UnknownHostException("www.googleapis.com") }
-        val scope2 = CoroutineScope(coroutineContext + kotlinx.coroutines.SupervisorJob())
+        val scope2 = CoroutineScope(backgroundScope.coroutineContext + kotlinx.coroutines.SupervisorJob(backgroundScope.coroutineContext[kotlinx.coroutines.Job]))
         val c = controller(google, files, scope2)
         c.start()
         testScheduler.advanceTimeBy(5_000)
@@ -357,12 +373,128 @@ class CacheTest {
     @Test
     fun googleErrorIsNotTreatedAsOffline() = kotlinx.coroutines.test.runTest {
         val google = FakeGoogle(zone).apply { failWith = app.calendar.data.CalendarApiException(403, "Insufficient Permission") }
-        val scope = CoroutineScope(coroutineContext + kotlinx.coroutines.SupervisorJob())
+        val scope = CoroutineScope(backgroundScope.coroutineContext + kotlinx.coroutines.SupervisorJob(backgroundScope.coroutineContext[kotlinx.coroutines.Job]))
         val c = controller(google, app.calendar.data.InMemoryFileCache(), scope)
         c.start()
         testScheduler.advanceTimeBy(5_000)
         assertFalse(c.offline)
         assertTrue(c.toasts.any { "Insufficient Permission" in it.message }, c.toasts.toString())
         scope.coroutineContext[kotlinx.coroutines.Job]!!.cancel()
+    }
+}
+
+class OfflineEditsTest {
+    private val zone = TimeZone.of("Asia/Kolkata")
+    private val now = LocalDateTime(2026, 11, 11, 10, 0).toInstant(zone)
+    private val day = LocalDate(2026, 11, 11)
+    private val offlineError = java.net.UnknownHostException("www.googleapis.com")
+
+    private fun controller(google: FakeGoogle, files: app.calendar.data.FileCache, scope: CoroutineScope) =
+        CalendarController(
+            listOf(google),
+            AppSettings(InMemoryStore()).apply { zones = listOf(ZoneEntry("Asia/Kolkata")) },
+            scope, cache = app.calendar.data.EventCache(files), clock = { now },
+        )
+
+    private fun CalendarController.find(title: String) =
+        eventsBetween(day, LocalDate(2026, 11, 12)).firstOrNull { it.title == title }
+
+    private fun kotlinx.coroutines.test.TestScope.newScope() = CoroutineScope(backgroundScope.coroutineContext + kotlinx.coroutines.SupervisorJob(backgroundScope.coroutineContext[kotlinx.coroutines.Job]))
+    private fun CoroutineScope.stop() = coroutineContext[kotlinx.coroutines.Job]!!.cancel()
+
+    @Test
+    fun editsWhileOfflineSyncWhenBackAndMerge() = kotlinx.coroutines.test.runTest {
+        val google = FakeGoogle(zone)
+        val scope = newScope()
+        val c = controller(google, app.calendar.data.InMemoryFileCache(), scope)
+        c.start(); testScheduler.advanceTimeBy(5_000)
+        google.failWith = offlineError
+        c.refresh(); testScheduler.advanceTimeBy(5_000)
+        assertTrue(c.offline)
+
+        val meeting = c.find("Real meeting")!!
+        val t = meeting.timing as EventTiming.Timed
+        c.changeTiming(meeting, EventTiming.Timed(t.start + 1.hours, t.end + 1.hours))
+        val moved = c.find("Real meeting")!!
+        c.changeTiming(moved, EventTiming.Timed(t.start + 2.hours, t.end + 2.hours))
+        assertEquals(t.start + 2.hours, (c.find("Real meeting")!!.timing as EventTiming.Timed).start, "shown at once")
+        assertEquals(1, c.pendingChanges, "two drags of one event merge into one change")
+        assertEquals(1, c.toasts.count { "offline" in it.message.lowercase() })
+
+        google.failWith = null
+        testScheduler.advanceTimeBy(60_000)
+        assertFalse(c.offline)
+        assertEquals(0, c.pendingChanges)
+        assertEquals(listOf("update g1 Real meeting"), google.calls)
+        assertEquals(t.start + 2.hours, (c.find("Real meeting")!!.timing as EventTiming.Timed).start)
+        scope.stop()
+    }
+
+    @Test
+    fun createdThenDeletedOfflineNeverReachesGoogle() = kotlinx.coroutines.test.runTest {
+        val google = FakeGoogle(zone)
+        val scope = newScope()
+        val c = controller(google, app.calendar.data.InMemoryFileCache(), scope)
+        c.start(); testScheduler.advanceTimeBy(5_000)
+        google.failWith = offlineError
+        c.refresh(); testScheduler.advanceTimeBy(5_000)
+
+        val start = LocalDateTime(2026, 11, 11, 18, 0).toInstant(zone)
+        c.startNewEvent(EventTiming.Timed(start, start + 1.hours)); c.updateDraft { it.copy(title = "Gym") }; c.saveEditor()
+        assertNotNull(c.find("Gym"))
+        c.delete(c.find("Gym")!!)
+        assertEquals(0, c.pendingChanges)
+        google.failWith = null
+        testScheduler.advanceTimeBy(60_000)
+        assertTrue(google.calls.isEmpty(), google.calls.toString())
+        scope.stop()
+    }
+
+    @Test
+    fun queuedChangesSurviveRestart() = kotlinx.coroutines.test.runTest {
+        val files = app.calendar.data.InMemoryFileCache()
+        val google = FakeGoogle(zone)
+        val scope1 = newScope()
+        val c1 = controller(google, files, scope1)
+        c1.start(); testScheduler.advanceTimeBy(5_000)
+        google.failWith = offlineError
+        c1.refresh(); testScheduler.advanceTimeBy(5_000)
+        val start = LocalDateTime(2026, 11, 11, 18, 0).toInstant(zone)
+        c1.startNewEvent(EventTiming.Timed(start, start + 1.hours)); c1.updateDraft { it.copy(title = "Dinner") }; c1.saveEditor()
+        c1.delete(c1.find("Real meeting")!!)
+        assertEquals(2, c1.pendingChanges)
+        scope1.stop()
+
+        // App restarts, still offline: the changes are still shown and queued.
+        val scope2 = newScope()
+        val c2 = controller(google, files, scope2)
+        c2.start(); testScheduler.advanceTimeBy(5_000)
+        assertEquals(2, c2.pendingChanges)
+        assertNotNull(c2.find("Dinner"))
+        assertNull(c2.find("Real meeting"))
+
+        google.failWith = null
+        testScheduler.advanceTimeBy(60_000)
+        assertEquals(0, c2.pendingChanges)
+        assertEquals(listOf("create g100 Dinner", "delete g1"), google.calls)
+        assertEquals("g100", c2.find("Dinner")!!.id, "temporary id replaced by Google's")
+        scope2.stop()
+    }
+
+    @Test
+    fun editOfEventCreatedWhileItIsBeingSentUsesGooglesId() = kotlinx.coroutines.test.runTest {
+        val google = FakeGoogle(zone)
+        val scope = newScope()
+        val c = controller(google, app.calendar.data.InMemoryFileCache(), scope)
+        c.start(); testScheduler.advanceTimeBy(5_000)
+        val start = LocalDateTime(2026, 11, 11, 18, 0).toInstant(zone)
+        c.startNewEvent(EventTiming.Timed(start, start + 1.hours)); c.updateDraft { it.copy(title = "Call") }; c.saveEditor()
+        testScheduler.advanceTimeBy(50) // create is in flight
+        val shown = c.find("Call")!!
+        c.changeTiming(shown, EventTiming.Timed(start + 1.hours, start + 2.hours))
+        testScheduler.advanceTimeBy(5_000)
+        assertEquals(listOf("create g100 Call", "update g100 Call"), google.calls)
+        assertEquals(start + 1.hours, (c.find("Call")!!.timing as EventTiming.Timed).start)
+        scope.stop()
     }
 }

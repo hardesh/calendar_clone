@@ -62,6 +62,11 @@ class TimeMathTest {
         assertEquals(LocalDate(2026, 10, 26), monthGridStart(wed, DayOfWeek.MONDAY))
         assertEquals(LocalDate(2026, 12, 1), pageAnchor(ViewMode.MONTH, LocalDate(2026, 11, 30), 1))
         assertEquals(LocalDate(2026, 11, 14), pageAnchor(ViewMode.THREE_DAY, wed, 1))
+        val week = visibleDays(ViewMode.WEEK, wed, DayOfWeek.SUNDAY)
+        assertEquals(LocalDate(2026, 11, 8), week.first())
+        assertEquals(LocalDate(2026, 11, 14), week.last())
+        assertEquals(LocalDate(2026, 11, 9), visibleDays(ViewMode.WEEK, wed, DayOfWeek.MONDAY).first())
+        assertEquals(LocalDate(2026, 11, 18), pageAnchor(ViewMode.WEEK, wed, 1))
     }
 
     @Test
