@@ -53,12 +53,15 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Deb, TargetFormat.Rpm)
             packageName = "Calendar"
+            // macOS needs a first number above 0, so the Mac bundle keeps 1.0.0; Linux uses the release number.
             packageVersion = "1.0.0"
             modules("jdk.httpserver", "java.net.http")
             description = "Calendar for Google accounts, in the style of Notion Calendar"
             vendor = "Calendar"
             linux {
                 packageName = "calendar-app"
+                debPackageVersion = "0.2.0"
+                rpmPackageVersion = "0.2.0"
                 debMaintainer = "calendar-app@users.noreply.github.com"
                 menuGroup = "Office"
                 appCategory = "Office"
