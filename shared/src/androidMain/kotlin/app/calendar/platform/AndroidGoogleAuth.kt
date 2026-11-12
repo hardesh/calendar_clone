@@ -28,11 +28,17 @@ import kotlinx.coroutines.tasks.await
  * Requires an OAuth client of type "Android" for this package name and signing
  * certificate in the same Google Cloud project (see README).
  */
-class AndroidGoogleAuth(private val activity: ComponentActivity) : GoogleAuth {
+class AndroidGoogleAuth(
+    context: android.content.Context,
+    /** Null in the background (reminder sync): then only silent token refresh is possible. */
+    private val activity: ComponentActivity? = null,
+) : GoogleAuth {
+    constructor(activity: ComponentActivity) : this(activity, activity)
+
     override val isConfigured = true
     override val setupHint = "Register an Android OAuth client for app.calendar in Google Cloud (see README)."
 
-    private val client = Identity.getAuthorizationClient(activity)
+    private val client = Identity.getAuthorizationClient(context)
     private val scopes = listOf(
         "openid", "email", "profile",
         "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
@@ -43,10 +49,10 @@ class AndroidGoogleAuth(private val activity: ComponentActivity) : GoogleAuth {
     private var pendingConsent: CompletableDeferred<ActivityResult>? = null
 
     // Launchers must be registered before the activity is started, i.e. construct this in onCreate.
-    private val pickLauncher = activity.registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+    private val pickLauncher = activity?.registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         pendingPick?.complete(it)
     }
-    private val consentLauncher = activity.registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) {
+    private val consentLauncher = activity?.registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) {
         pendingConsent?.complete(it)
     }
 
@@ -54,8 +60,9 @@ class AndroidGoogleAuth(private val activity: ComponentActivity) : GoogleAuth {
     private val mutex = Mutex()
 
     override suspend fun signIn(): SignInResult {
+        val launcher = pickLauncher ?: throw IllegalStateException("Sign-in needs the app to be open")
         val pick = CompletableDeferred<ActivityResult>().also { pendingPick = it }
-        pickLauncher.launch(
+        launcher.launch(
             AccountManager.newChooseAccountIntent(null, null, arrayOf("com.google"), null, null, null, null),
         )
         val result = pick.await()
@@ -95,8 +102,9 @@ class AndroidGoogleAuth(private val activity: ComponentActivity) : GoogleAuth {
             throw IllegalStateException(describe(e), e)
         }
         if (result.hasResolution()) {
+            val launcher = consentLauncher ?: throw ReauthRequiredException(email, "Calendar access needs to be confirmed in the app")
             val consent = CompletableDeferred<ActivityResult>().also { pendingConsent = it }
-            consentLauncher.launch(IntentSenderRequest.Builder(result.pendingIntent!!.intentSender).build())
+            launcher.launch(IntentSenderRequest.Builder(result.pendingIntent!!.intentSender).build())
             val r = consent.await()
             if (r.resultCode != Activity.RESULT_OK) throw ReauthRequiredException(email, "Calendar access wasn't granted")
             result = try {

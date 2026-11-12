@@ -42,8 +42,9 @@ class ScreenshotTest {
         return c
     }
 
-    private fun shoot(name: String, mode: ViewMode, width: Int, height: Int, dark: Boolean, density: Float = 1f) {
+    private fun shoot(name: String, mode: ViewMode, width: Int, height: Int, dark: Boolean, density: Float = 1f, editor: Boolean = false) {
         val c = controller(mode)
+        if (editor) c.openEditor(c.eventsBetween(c.today(), c.today().let { kotlinx.datetime.LocalDate.fromEpochDays(it.toEpochDays() + 1) }).first { it.title == "Lunch" })
         ImageComposeScene(width, height, Density(density)) {
             AppTheme(dark = dark) { CalendarScreen(c) }
         }.use { scene ->
@@ -61,6 +62,7 @@ class ScreenshotTest {
         shoot("desktop-week-light", ViewMode.WEEK, 1280, 840, dark = false)
         shoot("desktop-week-dark", ViewMode.WEEK, 1280, 840, dark = true)
         shoot("desktop-day-light", ViewMode.DAY, 1280, 840, dark = false)
+        shoot("desktop-editor-light", ViewMode.WEEK, 1280, 840, dark = false, editor = true)
         shoot("desktop-month-light", ViewMode.MONTH, 1280, 840, dark = false)
         shoot("desktop-month-dark", ViewMode.MONTH, 1280, 840, dark = true)
         shoot("phone-3day-dark", ViewMode.THREE_DAY, 412 * 2, 900 * 2, dark = true, density = 2f)

@@ -26,9 +26,9 @@ default:
 build:
     ./gradlew :shared:compileKotlinJvm :desktopApp:compileKotlin :androidApp:assembleDebug
 
-# Run all tests (logic, Google API client, simulated mouse drags, screenshot renders)
+# Run all tests (logic, Google API client, simulated mouse drags, screenshot renders, menu bar)
 test:
-    ./gradlew :shared:jvmTest
+    ./gradlew :shared:jvmTest :desktopApp:test
 
 # Run one test class or method, e.g. `just test-one MouseDragTest`
 test-one name:

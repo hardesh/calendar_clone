@@ -20,6 +20,7 @@ import app.calendar.logic.zoneOrNull
 import app.calendar.model.Account
 import app.calendar.model.CalEvent
 import app.calendar.model.CalendarInfo
+import app.calendar.model.UpcomingEvent
 import app.calendar.model.EventTiming
 import app.calendar.model.ViewMode
 import app.calendar.model.ZoneEntry
@@ -40,6 +41,7 @@ import kotlinx.datetime.TimeZone
 import kotlinx.datetime.atStartOfDayIn
 import kotlinx.datetime.toLocalDateTime
 import kotlin.time.Clock
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
@@ -63,6 +65,8 @@ class CalendarController(
     private val cache: EventCache = EventCache(InMemoryFileCache()),
     private val clock: () -> Instant = { Clock.System.now() },
     forceDemo: Boolean = false,
+    /** Whether this device can notify before events (shows the reminder setting). */
+    val supportsReminders: Boolean = false,
 ) {
     // ---- view state ------------------------------------------------------------
     var viewMode by mutableStateOf(settings.viewMode ?: ViewMode.THREE_DAY)
@@ -74,6 +78,18 @@ class CalendarController(
     var weekStart by mutableStateOf(settings.weekStart)
         private set
     var demoEnabled by mutableStateOf(settings.demoEnabled || forceDemo)
+        private set
+    /** Minutes before events to notify (0 = off); only used where [supportsReminders]. */
+    var reminderMinutes by mutableIntStateOf(settings.reminderMinutes)
+        private set
+
+    fun changeReminderMinutes(minutes: Int) {
+        reminderMinutes = minutes
+        settings.reminderMinutes = minutes
+    }
+
+    /** Zoom of the day/week grids as an hour height in dp; null = device default. */
+    var hourHeight by mutableStateOf(settings.hourHeight)
         private set
 
     val primaryZone: TimeZone get() = zones.firstOrNull()?.let { zoneOrNull(it.id) } ?: TimeZone.currentSystemDefault()
@@ -124,9 +140,19 @@ class CalendarController(
     var dragCancelToken by mutableIntStateOf(0)
         private set
 
+    private val forceDemo = forceDemo
+
     init {
         if (forceDemo && !settings.demoEnabled) settings.demoEnabled = true
+        // Demo data is only for trying the app; once a real account is connected it goes away.
+        if (!forceDemo && demoEnabled && hasRealAccount()) {
+            demoEnabled = false
+            settings.demoEnabled = false
+        }
     }
+
+    /** True once any Google account is connected; the demo data switch is hidden then. */
+    fun hasRealAccount(): Boolean = providers.any { it.id != "demo" && it.accounts().isNotEmpty() }
 
     fun today(): LocalDate = clock().toLocalDateTime(primaryZoneOrDefault()).date
     fun now(): Instant = clock()
@@ -286,6 +312,22 @@ class CalendarController(
         }
     }
 
+    // ---- zoom ---------------------------------------------------------------------
+    fun defaultHourHeight(compact: Boolean) = if (compact) 52f else 48f
+
+    fun hourHeightFor(compact: Boolean) = hourHeight ?: defaultHourHeight(compact)
+
+    fun setZoom(hourHeightDp: Float?) {
+        val v = hourHeightDp?.coerceIn(MIN_HOUR_HEIGHT, MAX_HOUR_HEIGHT)
+        hourHeight = v
+        settings.hourHeight = v
+    }
+
+    /** Multiplies the hour height, e.g. 1.25 to zoom in one step. */
+    fun zoomBy(factor: Float, compact: Boolean) = setZoom(hourHeightFor(compact) * factor)
+
+    fun resetZoom() = setZoom(null)
+
     // ---- time zones ------------------------------------------------------------
     fun updateZones(list: List<ZoneEntry>) {
         if (list.isEmpty()) return
@@ -352,6 +394,11 @@ class CalendarController(
             try {
                 val account = google.addAccount()
                 accountErrors.remove(account.id)
+                if (demoEnabled && !forceDemo) {
+                    demoEnabled = false
+                    settings.demoEnabled = false
+                    clearWindows()
+                }
                 reloadAccounts()
                 refreshEvents(showErrors = true)
                 toast("Connected ${account.email}")
@@ -383,12 +430,36 @@ class CalendarController(
     // ---- loading ----------------------------------------------------------------
     private fun windowStartFor(date: LocalDate) = monthGridStart(date, weekStart)
 
-    /** Window starts needed for what is on screen (a 3-day view can cross a month boundary). */
+    /**
+     * Window starts to keep loaded: what is on screen (a 3-day or week view can cross a month
+     * boundary), plus today and tomorrow for the menu bar and reminders.
+     */
     private fun currentWindows(): Set<LocalDate> {
         val days = visibleDays()
-        return setOf(windowStartFor(days.first()), windowStartFor(days.last())).let { set ->
-            if (viewMode == ViewMode.MONTH) setOf(monthGridStart(anchor, weekStart)) else set
-        }
+        val onScreen = if (viewMode == ViewMode.MONTH) setOf(monthGridStart(anchor, weekStart))
+        else setOf(windowStartFor(days.first()), windowStartFor(days.last()))
+        val today = today()
+        return onScreen + windowStartFor(today) + windowStartFor(today.plusDays(1))
+    }
+
+    /** Timed events from an hour ago to two days ahead, soonest first, from visible calendars. */
+    fun upcomingEvents(): List<UpcomingEvent> {
+        val now = clock()
+        val zone = primaryZone
+        val today = today()
+        return eventsBetween(today.plusDays(-1), today.plusDays(3))
+            .filter { it.timing is EventTiming.Timed && it.id != DRAFT_ID }
+            .filter { it.endIn(zone) > now - 1.hours && it.startIn(zone) < now + 48.hours }
+            .map { UpcomingEvent(it.key, it.title, it.startIn(zone), it.endIn(zone), colorOf(it), it.location) }
+            .sortedBy { it.start }
+    }
+
+    /** Opens the editor for an event shown in the menu bar or a notification, and shows its day. */
+    fun openEventByKey(key: String) {
+        val event = windows.values.asSequence().flatten().firstOrNull { it.key == key } ?: return
+        val day = event.startIn(primaryZone).toLocalDateTime(primaryZone).date
+        if (day !in visibleDays()) goTo(day)
+        openEditor(event)
     }
 
     private fun clearWindows() {
@@ -720,5 +791,8 @@ class CalendarController(
 
     companion object {
         const val DRAFT_ID = "__draft__"
+        const val MIN_HOUR_HEIGHT = 20f
+        const val MAX_HOUR_HEIGHT = 180f
+        const val ZOOM_STEP = 1.25f
     }
 }

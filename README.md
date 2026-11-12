@@ -19,7 +19,19 @@ accounts. There is no server: each device signs in to Google itself.
   after a restart. Repeated edits to one event are combined, and an event created and deleted
   while offline never reaches Google. If Google rejects a queued change, the event goes back to
   how it was and a message says why.
-- Demo data (sidebar → Settings → Demo data) lets you try everything without a Google account.
+- **Event colours**: pick one of Google's 11 event colours (or the calendar's) in the editor;
+  it's saved to Google, so Google Calendar shows it too.
+- **Zoom** the day/week grid: ⌘+ / ⌘− / ⌘0 or ⌘/Ctrl + scroll on Mac/Linux, pinch on the phone,
+  or Settings → Zoom. Remembered per device.
+- **Mac menu bar**: your next event ("Software Roadmap · in 1h 25m", or "· now" just after it
+  starts). Click it for the rest of today; pick one to open it. Closing the window keeps Calendar
+  in the menu bar; quit from its menu or with ⌘Q, and click the Dock icon to bring it back.
+- **Phone reminders**: a notification before each timed event (Settings → Notify before events:
+  off, 5, 10, 15, 30 or 60 minutes; default 10). They arrive even if the app is closed: an hourly
+  background check refreshes the next two days, and reminders are re-armed after a restart.
+  Tapping one opens the event. Hidden calendars don't notify.
+- Demo data (sidebar → Settings → Demo data) lets you try everything without a Google account;
+  the switch disappears once a Google account is connected.
 
 ## Download
 
@@ -111,6 +123,7 @@ Apple-silicon `.dmg` and an amd64 `.deb`.
 | `←` `→` (or `J` `K`) | Previous / next |
 | `Esc` | Cancel a drag in progress, or close the editor |
 | `⌘R` | Refresh |
+| `⌘+` / `⌘−` / `⌘0` | Zoom in / out / reset (also ⌘ + scroll) |
 | `⌘↩` | Save in the editor |
 
 ## Google setup (one time, about 10 minutes)

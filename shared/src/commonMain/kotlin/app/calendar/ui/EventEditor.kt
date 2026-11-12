@@ -24,6 +24,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.DatePicker
@@ -49,6 +50,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isMetaPressed
@@ -71,6 +73,7 @@ import app.calendar.logic.plusDays
 import app.calendar.logic.zoneAbbreviation
 import app.calendar.logic.zoneOrNull
 import app.calendar.model.CalEvent
+import app.calendar.model.EventColors
 import app.calendar.model.EventTiming
 import app.calendar.state.CalendarController
 import app.calendar.ui.theme.AppType
@@ -158,6 +161,7 @@ private fun ColumnScope.EditorContent(controller: CalendarController, draft: Cal
     val scroll = rememberScrollState()
     Column(Modifier.heightIn(max = 520.dp).verticalScroll(scroll), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         CalendarPicker(controller, draft, editable)
+        if (editable) ColorPicker(controller, draft)
         TimingEditor(draft.timing, zone, editable) { t -> controller.updateDraft { it.copy(timing = t) } }
         SecondaryZoneTimes(controller, draft)
         if (draft.recurringEventId != null) {
@@ -221,6 +225,47 @@ private fun CalendarPicker(controller: CalendarController, draft: CalEvent, edit
                         controller.updateDraft { it.copy(accountId = c.accountId, calendarId = c.id) }
                     },
                 )
+            }
+        }
+    }
+}
+
+/** Google's event colours plus "calendar colour" (no colour of its own). */
+@Composable
+private fun ColorPicker(controller: CalendarController, draft: CalEvent) {
+    val colors = LocalAppColors.current
+    val calendarColor = Color((controller.calendarOf(draft)?.color ?: 0xFF9B9B9BL).toInt())
+    val options: List<Pair<String?, Color>> = listOf<Pair<String?, Color>>(null to calendarColor) +
+        EventColors.all.map { it.id to Color(it.argb.toInt()) }
+    val selectedName = EventColors.all.firstOrNull { it.id == draft.colorId }?.name ?: "Calendar colour"
+    Text("Colour · $selectedName", style = AppType.small, color = colors.textSecondary, modifier = Modifier.padding(start = 6.dp))
+    androidx.compose.foundation.layout.FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier.padding(start = 6.dp),
+    ) {
+        for ((id, color) in options) {
+            val selected = draft.colorId == id || (id == null && EventColors.argbFor(draft.colorId) == null)
+            val name = id?.let { i -> EventColors.all.first { it.id == i }.name } ?: "Calendar colour"
+            run {
+                Box(
+                    Modifier
+                        .size(24.dp)
+                        .clip(CircleShape)
+                        .background(color)
+                        .then(if (selected) Modifier.border(2.dp, colors.text.copy(alpha = 0.55f), CircleShape) else Modifier)
+                        .clickable { controller.updateDraft { it.copy(colorId = id) } },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    when {
+                        selected -> androidx.compose.material3.Icon(Icons.Default.Check, name, tint = Color.White, modifier = Modifier.size(14.dp))
+                        id == null -> Box(
+                            Modifier.size(width = 2.dp, height = 18.dp)
+                                .graphicsLayer { rotationZ = 45f }
+                                .background(Color.White.copy(alpha = 0.85f)),
+                        )
+                    }
+                }
             }
         }
     }

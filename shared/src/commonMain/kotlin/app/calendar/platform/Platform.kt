@@ -59,7 +59,14 @@ class PlatformServices(
     val cache: app.calendar.data.FileCache = app.calendar.data.InMemoryFileCache(),
     /** Start with demo data on, e.g. from a `--demo` flag. */
     val forceDemo: Boolean = false,
-)
+    /** Called with soon-to-start events whenever they change (menu bar on Mac, reminders on Android). */
+    val onUpcomingEvents: ((List<app.calendar.model.UpcomingEvent>) -> Unit)? = null,
+    /** Shown as a Settings row on platforms that can notify before events. */
+    val supportsReminders: Boolean = false,
+) {
+    /** Set by the app once running: opens the editor for an event key (e.g. from the menu bar). */
+    var openEvent: ((String) -> Unit)? = null
+}
 
 /** Mouse cursor for resizing an event vertically; plain arrow where there is no such cursor. */
 expect val ResizeVerticalPointerIcon: PointerIcon

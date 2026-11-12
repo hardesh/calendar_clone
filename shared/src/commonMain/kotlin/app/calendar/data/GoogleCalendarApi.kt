@@ -2,6 +2,7 @@ package app.calendar.data
 
 import app.calendar.model.CalEvent
 import app.calendar.model.CalendarInfo
+import app.calendar.model.EventColors
 import app.calendar.model.EventFields
 import app.calendar.model.EventTiming
 import io.ktor.client.HttpClient
@@ -70,13 +71,6 @@ internal data class EventDateTime(val date: String? = null, val dateTime: String
 @Serializable
 internal data class UserInfo(val sub: String, val email: String, val name: String? = null, val picture: String? = null)
 
-/** Google's fixed event colour palette (colorId 1–11). */
-private val eventColors = mapOf(
-    "1" to 0xFF7986CBL, "2" to 0xFF33B679L, "3" to 0xFF8E24AAL, "4" to 0xFFE67C73L,
-    "5" to 0xFFF6BF26L, "6" to 0xFFF4511EL, "7" to 0xFF039BE5L, "8" to 0xFF616161L,
-    "9" to 0xFF3F51B5L, "10" to 0xFF0B8043L, "11" to 0xFFD50000L,
-)
-
 internal fun parseHexColor(hex: String?): Long {
     val h = hex?.removePrefix("#") ?: return 0xFF4285F4L
     return (h.toLongOrNull(16) ?: 0x4285F4L) or 0xFF000000L
@@ -111,13 +105,15 @@ internal fun EventDto.toCalEvent(accountId: String, calendarId: String): CalEven
         location = location,
         description = description,
         recurringEventId = recurringEventId,
-        colorOverride = colorId?.let { eventColors[it] },
+        colorId = colorId?.takeIf { EventColors.argbFor(it) != null },
     )
 }
 
 /** Request body for insert/patch. Both date and dateTime are written so switching all-day on/off works with PATCH. */
 internal fun EventFields.toJson(): JsonObject = buildJsonObject {
     put("summary", title)
+    // Always sent, so choosing "calendar colour" clears a colour set before.
+    put("colorId", colorId?.let { kotlinx.serialization.json.JsonPrimitive(it) } ?: JsonNull)
     location?.let { put("location", it) }
     description?.let { put("description", it) }
     when (val t = timing) {

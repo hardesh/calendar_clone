@@ -41,7 +41,8 @@ internal data class CachedEvent(
     val loc: String? = null,
     val desc: String? = null,
     val rec: String? = null,
-    val col: Long? = null,
+    /** Google event colour id. */
+    val cid: String? = null,
 )
 
 @Serializable
@@ -131,9 +132,9 @@ class EventCache(private val files: FileCache, private val maxWindows: Int = 36)
 
 internal fun CalEvent.toCached(): CachedEvent = when (val t = timing) {
         is EventTiming.Timed -> CachedEvent(accountId, calendarId, id, title, s = t.start.toEpochMilliseconds(), e = t.end.toEpochMilliseconds(),
-            loc = location, desc = description, rec = recurringEventId, col = colorOverride)
+            loc = location, desc = description, rec = recurringEventId, cid = colorId)
         is EventTiming.AllDay -> CachedEvent(accountId, calendarId, id, title, ds = t.start.toString(), de = t.endExclusive.toString(),
-            loc = location, desc = description, rec = recurringEventId, col = colorOverride)
+            loc = location, desc = description, rec = recurringEventId, cid = colorId)
     }
 
 internal fun CachedEvent.toEvent(): CalEvent? {
@@ -142,7 +143,7 @@ internal fun CachedEvent.toEvent(): CalEvent? {
             ds != null && de != null -> EventTiming.AllDay(LocalDate.parse(ds), LocalDate.parse(de))
             else -> return null
         }
-        return CalEvent(a, c, id, t, timing, loc, desc, rec, col)
+        return CalEvent(a, c, id, t, timing, loc, desc, rec, cid)
     }
 
 /**

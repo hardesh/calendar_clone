@@ -56,20 +56,31 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+private fun defaultHttpClient() = HttpClient {
+    install(HttpTimeout) {
+        requestTimeoutMillis = 30_000
+        connectTimeoutMillis = 15_000
+    }
+}
+
+/** Google accounts for code outside the UI, e.g. Android's background reminder sync. */
+fun createGoogleProvider(auth: app.calendar.platform.GoogleAuth, store: app.calendar.platform.KeyValueStore) =
+    GoogleProvider(auth, GoogleCalendarApi(defaultHttpClient()), store)
+
 fun createController(platform: PlatformServices, scope: CoroutineScope): CalendarController {
     val settings = AppSettings(platform.store)
-    val http = HttpClient {
-        install(HttpTimeout) {
-            requestTimeoutMillis = 30_000
-            connectTimeoutMillis = 15_000
-        }
-    }
+    val http = defaultHttpClient()
     lateinit var controller: CalendarController
     val providers = buildList {
         add(GoogleProvider(platform.googleAuth, GoogleCalendarApi(http), platform.store))
         add(DemoProvider(zone = { controller.primaryZone }))
     }
-    controller = CalendarController(providers, settings, scope, cache = app.calendar.data.EventCache(platform.cache), forceDemo = platform.forceDemo)
+    controller = CalendarController(
+        providers, settings, scope,
+        cache = app.calendar.data.EventCache(platform.cache),
+        forceDemo = platform.forceDemo,
+        supportsReminders = platform.supportsReminders,
+    )
     return controller
 }
 
@@ -78,6 +89,13 @@ fun CalendarApp(platform: PlatformServices) {
     val scope = rememberCoroutineScope()
     val controller = remember { createController(platform, scope) }
     LaunchedEffect(Unit) { controller.start() }
+    LaunchedEffect(Unit) {
+        platform.openEvent = { key -> controller.openEventByKey(key) }
+        val listener = platform.onUpcomingEvents ?: return@LaunchedEffect
+        // Reading reminderMinutes too makes a change of reminder time reschedule notifications.
+        androidx.compose.runtime.snapshotFlow { controller.reminderMinutes; controller.upcomingEvents() }
+            .collect { listener(it) }
+    }
     AppTheme { CalendarScreen(controller) }
 }
 
@@ -111,7 +129,7 @@ fun CalendarScreen(controller: CalendarController) {
                 gesturesEnabled = drawer.isOpen,
                 drawerContent = {
                     ModalDrawerSheet(drawerContainerColor = colors.sidebar, modifier = Modifier.width(300.dp)) {
-                        Sidebar(controller, Modifier.statusBarsPadding(), onNavigate = { scope.launch { drawer.close() } })
+                        Sidebar(controller, Modifier.statusBarsPadding(), compact = true, onNavigate = { scope.launch { drawer.close() } })
                     }
                 },
             ) {
@@ -172,6 +190,9 @@ private fun handleShortcut(controller: CalendarController, e: KeyEvent): Boolean
     when {
         e.key == Key.Escape -> controller.cancelDrag()
         mod && e.key == Key.R -> controller.refresh()
+        mod && (e.key == Key.Equals || e.key == Key.Plus || e.key == Key.NumPadAdd) -> controller.zoomBy(CalendarController.ZOOM_STEP, compact = false)
+        mod && (e.key == Key.Minus || e.key == Key.NumPadSubtract) -> controller.zoomBy(1 / CalendarController.ZOOM_STEP, compact = false)
+        mod && (e.key == Key.Zero || e.key == Key.NumPad0) -> controller.resetZoom()
         mod -> return false
         e.key == Key.D || e.key == Key.One -> controller.setView(ViewMode.DAY)
         e.key == Key.W || e.key == Key.Seven || e.key == Key.Three -> controller.setView(ViewMode.WEEK)

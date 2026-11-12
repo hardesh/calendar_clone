@@ -43,6 +43,16 @@ class AppSettings(private val store: KeyValueStore) {
         get() = store.get("demoEnabled") == "true"
         set(v) = store.put("demoEnabled", v.toString())
 
+    /** Hour height in dp for the day/week grids; null means the device's default. */
+    var hourHeight: Float?
+        get() = store.get("hourHeight")?.toFloatOrNull()
+        set(v) = if (v == null) store.remove("hourHeight") else store.put("hourHeight", v.toString())
+
+    /** Minutes before a timed event to notify (phone); 0 = off. */
+    var reminderMinutes: Int
+        get() = store.get("reminderMinutes")?.toIntOrNull() ?: 10
+        set(v) = store.put("reminderMinutes", v.toString())
+
     var defaultCalendar: String?
         get() = store.get("defaultCalendar")
         set(v) = if (v == null) store.remove("defaultCalendar") else store.put("defaultCalendar", v)

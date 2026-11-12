@@ -32,6 +32,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -43,6 +44,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerHoverIcon
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.isCtrlPressed
+import androidx.compose.ui.input.pointer.isMetaPressed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -126,7 +131,7 @@ fun TimeGridView(controller: CalendarController, compact: Boolean, modifier: Mod
     val draft = controller.editor?.takeIf { it.isNew }?.draft
     val all = if (draft != null) events + draft else events
     val (allDayEvents, timedEvents) = all.partition { showsInAllDayRow(it) }
-    val hourHeight = if (compact) 52.dp else 48.dp
+    val hourHeight = controller.hourHeightFor(compact).dp
     val zonesShown = if (compact) controller.zones.take(2) else controller.zones
     val gutterColWidth = if (compact) 42.dp else 52.dp
     val gutterWidth = gutterColWidth * zonesShown.size
@@ -136,10 +141,58 @@ fun TimeGridView(controller: CalendarController, compact: Boolean, modifier: Mod
         DayHeaderRow(controller, days, gutterWidth, gutterColWidth)
         AllDayRow(controller, days, allDayEvents, gutterWidth, gutterColWidth, zonesShown.map { it.displayLabel(controller.now()) }, compact)
         Box(Modifier.fillMaxWidth().height(1.dp).background(colors.gridLineStrong))
-        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+        val scroll = rememberScrollState()
+        val density = LocalDensity.current
+        // Scroll position to apply once the grid has been laid out at a new zoom level.
+        var pendingScroll by remember { mutableStateOf<Int?>(null) }
+        LaunchedEffect(hourHeight) {
+            val target = pendingScroll ?: return@LaunchedEffect
+            withFrameNanos { }
+            scroll.scrollTo(target.coerceAtLeast(0))
+            pendingScroll = null
+        }
+        // Zooms by [factor] keeping the grid point at [focusY] (relative to the viewport) in place.
+        fun zoomAround(factor: Float, focusY: Float) {
+            val oldPx = with(density) { hourHeight.toPx() }
+            controller.zoomBy(factor, compact)
+            val newPx = with(density) { controller.hourHeightFor(compact).dp.toPx() }
+            val currentScroll = pendingScroll ?: scroll.value
+            pendingScroll = ((currentScroll + focusY) * (newPx / oldPx) - focusY).roundToInt()
+        }
+        val zoomState = rememberUpdatedState(::zoomAround)
+        BoxWithConstraints(
+            Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .pointerInput(compact) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            // Initial pass: see pinches and ⌘/Ctrl+wheel before scrolling and dragging do.
+                            val ev = awaitPointerEvent(PointerEventPass.Initial)
+                            val mods = ev.keyboardModifiers
+                            if (ev.type == PointerEventType.Scroll && (mods.isCtrlPressed || mods.isMetaPressed)) {
+                                val change = ev.changes.first()
+                                val dy = change.scrollDelta.y
+                                if (dy != 0f) zoomState.value(if (dy < 0) 1.1f else 1 / 1.1f, change.position.y)
+                                ev.changes.forEach { it.consume() }
+                                continue
+                            }
+                            val pressed = ev.changes.filter { it.pressed }
+                            if (pressed.size >= 2) {
+                                val a = pressed[0]
+                                val b = pressed[1]
+                                val now = (a.position - b.position).getDistance()
+                                val before = (a.previousPosition - b.previousPosition).getDistance()
+                                if (before > 8f && now > 8f && now != before) {
+                                    zoomState.value(now / before, (a.position.y + b.position.y) / 2f)
+                                }
+                                ev.changes.forEach { it.consume() }
+                            }
+                        }
+                    }
+                },
+        ) {
             val viewportHeight = constraints.maxHeight.toFloat()
-            val scroll = rememberScrollState()
-            val density = LocalDensity.current
             LaunchedEffect(Unit) {
                 // Open scrolled so the current time sits about a third of the way down.
                 val nowMin = minuteOfDay(controller.now(), zone)

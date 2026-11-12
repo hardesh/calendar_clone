@@ -67,9 +67,10 @@ import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.DayOfWeek
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.plus
+import kotlin.math.roundToInt
 
 @Composable
-fun Sidebar(controller: CalendarController, modifier: Modifier = Modifier, onNavigate: () -> Unit = {}) {
+fun Sidebar(controller: CalendarController, modifier: Modifier = Modifier, compact: Boolean = false, onNavigate: () -> Unit = {}) {
     val colors = LocalAppColors.current
     var showZonePicker by remember { mutableStateOf(false) }
     Column(
@@ -112,7 +113,11 @@ fun Sidebar(controller: CalendarController, modifier: Modifier = Modifier, onNav
         for ((i, z) in controller.zones.withIndex()) ZoneRow(controller, z, i)
 
         SectionHeader("Settings")
-        ToggleRow("Demo data", controller.demoEnabled) { controller.changeDemoEnabled(it) }
+        if (!controller.hasRealAccount() || controller.demoEnabled) {
+            ToggleRow("Demo data", controller.demoEnabled) { controller.changeDemoEnabled(it) }
+        }
+        ZoomRow(controller, compact)
+        if (controller.supportsReminders) ReminderRow(controller)
         ToggleRow("Week starts Monday", controller.weekStart == DayOfWeek.MONDAY) {
             controller.changeWeekStart(if (it) DayOfWeek.MONDAY else DayOfWeek.SUNDAY)
         }
@@ -355,6 +360,55 @@ private fun ZonePickerDialog(controller: CalendarController, onDismiss: () -> Un
                 }
             }
         }
+    }
+}
+
+/** "Notify before events": Off / 5 / 10 / 15 / 30 / 60 minutes. */
+@Composable
+private fun ReminderRow(controller: CalendarController) {
+    val colors = LocalAppColors.current
+    var open by remember { mutableStateOf(false) }
+    fun label(m: Int) = if (m == 0) "Off" else if (m == 60) "1 hour" else "$m min"
+    Row(
+        Modifier.fillMaxWidth().height(34.dp).padding(start = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("Notify before events", style = AppType.body, color = colors.text, modifier = Modifier.weight(1f))
+        Box {
+            HoverRow(onClick = { open = true }, modifier = Modifier.height(28.dp)) {
+                Text(label(controller.reminderMinutes), style = AppType.body, color = colors.textSecondary, modifier = Modifier.padding(horizontal = 8.dp))
+                Icon(Icons.Default.KeyboardArrowDown, null, tint = colors.textSecondary, modifier = Modifier.size(16.dp))
+            }
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                for (m in listOf(0, 5, 10, 15, 30, 60)) {
+                    DropdownMenuItem(text = { Text(label(m)) }, onClick = { open = false; controller.changeReminderMinutes(m) })
+                }
+            }
+        }
+    }
+}
+
+/** Zoom of the day/week grids: − / percentage (click to reset) / +. */
+@Composable
+private fun ZoomRow(controller: CalendarController, compact: Boolean) {
+    val colors = LocalAppColors.current
+    val percent = (controller.hourHeightFor(compact) / controller.defaultHourHeight(compact) * 100).roundToInt()
+    Row(
+        Modifier.fillMaxWidth().height(34.dp).padding(start = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("Zoom", style = AppType.body, color = colors.text, modifier = Modifier.weight(1f))
+        HoverRow(onClick = { controller.zoomBy(1 / CalendarController.ZOOM_STEP, compact) }, modifier = Modifier.size(26.dp)) {
+            Text("−", style = AppType.title, color = colors.textSecondary, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+        }
+        Text(
+            "$percent%",
+            style = AppType.small,
+            color = colors.textSecondary,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.width(44.dp).clickable { controller.resetZoom() },
+        )
+        IconBtn(Icons.Default.Add, "Zoom in", { controller.zoomBy(CalendarController.ZOOM_STEP, compact) }, size = 26.dp)
     }
 }
 

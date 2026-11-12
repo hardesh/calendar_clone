@@ -48,9 +48,12 @@ data class CalEvent(
     val location: String? = null,
     val description: String? = null,
     val recurringEventId: String? = null,
-    /** ARGB colour set on the event itself; null means "use the calendar colour". */
-    val colorOverride: Long? = null,
+    /** Google event colour id ("1".."11") set on the event itself; null means "use the calendar colour". */
+    val colorId: String? = null,
 ) {
+    /** ARGB colour from [colorId], or null to use the calendar's colour. */
+    val colorOverride: Long? get() = EventColors.argbFor(colorId)
+
     val key: String get() = "$accountId|$calendarId|$id"
     val calendarKey: String get() = calendarKey(accountId, calendarId)
     val isAllDay: Boolean get() = timing is EventTiming.AllDay
@@ -76,15 +79,48 @@ enum class ViewMode(val dayCount: Int, val label: String, val shortLabel: String
 @Serializable
 data class ZoneEntry(val id: String, val label: String? = null)
 
+/** A timed event coming up soon, for the Mac menu bar and phone reminders. */
+data class UpcomingEvent(
+    val key: String,
+    val title: String,
+    val start: Instant,
+    val end: Instant,
+    /** ARGB colour as shown in the app. */
+    val color: Long,
+    val location: String? = null,
+)
+
 /** The fields the event editor works with; used for create and update. */
 data class EventFields(
     val title: String,
     val timing: EventTiming,
     val location: String? = null,
     val description: String? = null,
+    val colorId: String? = null,
 )
 
-fun CalEvent.fields() = EventFields(title, timing, location, description)
+fun CalEvent.fields() = EventFields(title, timing, location, description, colorId)
 
 fun CalEvent.withFields(f: EventFields) =
-    copy(title = f.title, timing = f.timing, location = f.location, description = f.description)
+    copy(title = f.title, timing = f.timing, location = f.location, description = f.description, colorId = f.colorId)
+
+/** Google Calendar's fixed event colours, with the names Google Calendar shows. */
+object EventColors {
+    data class EventColor(val id: String, val name: String, val argb: Long)
+
+    val all = listOf(
+        EventColor("11", "Tomato", 0xFFD50000L),
+        EventColor("4", "Flamingo", 0xFFE67C73L),
+        EventColor("6", "Tangerine", 0xFFF4511EL),
+        EventColor("5", "Banana", 0xFFF6BF26L),
+        EventColor("2", "Sage", 0xFF33B679L),
+        EventColor("10", "Basil", 0xFF0B8043L),
+        EventColor("7", "Peacock", 0xFF039BE5L),
+        EventColor("9", "Blueberry", 0xFF3F51B5L),
+        EventColor("1", "Lavender", 0xFF7986CBL),
+        EventColor("3", "Grape", 0xFF8E24AAL),
+        EventColor("8", "Graphite", 0xFF616161L),
+    )
+
+    fun argbFor(id: String?): Long? = id?.let { i -> all.firstOrNull { it.id == i }?.argb }
+}

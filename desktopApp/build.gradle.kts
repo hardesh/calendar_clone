@@ -21,6 +21,11 @@ dependencies {
     implementation(project(":shared"))
     implementation(compose.desktop.currentOs)
     implementation(libs.kotlinx.coroutines.swing)
+    testImplementation(kotlin("test"))
+}
+
+tasks.withType<Test>().configureEach {
+    jvmArgs("-Dapple.awt.UIElement=true", "-Djava.awt.headless=true")
 }
 
 // Desktop OAuth client (type "Desktop app") from local.properties, which is git-ignored.

@@ -7,6 +7,7 @@ dependencies {
     implementation(project(":shared"))
     implementation(libs.androidx.activity.compose)
     implementation(libs.compose.foundation)
+    implementation(libs.androidx.work.runtime)
 }
 
 android {

@@ -322,7 +322,10 @@ class DesktopGoogleAuth(
         }
 }
 
-fun desktopPlatform(args: Array<String>): PlatformServices {
+fun desktopPlatform(
+    args: Array<String>,
+    onUpcomingEvents: ((List<app.calendar.model.UpcomingEvent>) -> Unit)? = null,
+): PlatformServices {
     val dir = desktopDataDir()
     val os = System.getProperty("os.name").lowercase()
     val secrets: SecretStore = when {
@@ -349,5 +352,6 @@ fun desktopPlatform(args: Array<String>): PlatformServices {
         googleAuth = DesktopGoogleAuth(clientId, clientSecret, secrets),
         cache = DirectoryCache(File(dir, "cache")),
         forceDemo = "--demo" in args,
+        onUpcomingEvents = onUpcomingEvents,
     )
 }

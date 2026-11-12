@@ -263,7 +263,8 @@ class DemoToggleTest {
         }
         return CalendarController(
             listOf(FakeGoogle(zone), DemoProvider({ zone }, latencyMs = 150)),
-            settings, scope, clock = { now },
+            // With a Google account connected, demo data can only stay on via the --demo override.
+            settings, scope, clock = { now }, forceDemo = demo,
         )
     }
 
@@ -320,7 +321,7 @@ class CacheTest {
     fun roundTrip() {
         val cache = app.calendar.data.EventCache(app.calendar.data.InMemoryFileCache())
         val g = FakeGoogle(zone)
-        val allDay = CalEvent(g.account.id, "primary", "a1", "Holiday", EventTiming.AllDay(day, LocalDate(2026, 11, 13)), location = "Home", colorOverride = 0xFF123456L)
+        val allDay = CalEvent(g.account.id, "primary", "a1", "Holiday", EventTiming.AllDay(day, LocalDate(2026, 11, 13)), location = "Home", colorId = "3")
         val demo = CalEvent("demo", "work", "d1", "Demo", EventTiming.AllDay(day, LocalDate(2026, 11, 12)))
         cache.saveWindow(kotlinx.datetime.DayOfWeek.SUNDAY, LocalDate(2026, 11, 1), listOf(g.event, allDay, demo), now)
         assertEquals(listOf(g.event, allDay), cache.loadWindow(kotlinx.datetime.DayOfWeek.SUNDAY, LocalDate(2026, 11, 1)))
@@ -496,5 +497,72 @@ class OfflineEditsTest {
         assertEquals(listOf("create g100 Call", "update g100 Call"), google.calls)
         assertEquals(start + 1.hours, (c.find("Call")!!.timing as EventTiming.Timed).start)
         scope.stop()
+    }
+}
+
+class ColorZoomDemoTest {
+    private val zone = TimeZone.of("Asia/Kolkata")
+    private val now = LocalDateTime(2026, 11, 11, 10, 0).toInstant(zone)
+
+    @Test
+    fun colourIsSentToGoogleAndCanBeCleared() = runTest {
+        val bodies = mutableListOf<String>()
+        val api = GoogleCalendarApi(HttpClient(MockEngine { req ->
+            bodies += (req.body as TextContent).text
+            respond("""{"id":"1","summary":"X","colorId":"5","start":{"date":"2026-11-11"},"end":{"date":"2026-11-12"}}""",
+                HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+        }))
+        val ev = CalEvent("a", "c", "1", "X", EventTiming.AllDay(LocalDate(2026, 11, 11), LocalDate(2026, 11, 12)))
+        val saved = api.patch(ev, EventFields("X", ev.timing, colorId = "5")) { "t" }
+        assertEquals("5", saved.colorId)
+        assertEquals(0xFFF6BF26L, saved.colorOverride) // Banana
+        api.patch(ev, EventFields("X", ev.timing, colorId = null)) { "t" }
+        assertEquals("5", Json.parseToJsonElement(bodies[0]).jsonObject.getValue("colorId").jsonPrimitive.content)
+        assertEquals(JsonNull, Json.parseToJsonElement(bodies[1]).jsonObject.getValue("colorId"))
+    }
+
+    @Test
+    fun colourChangeFromEditorIsSaved() {
+        val settings = AppSettings(InMemoryStore()).apply { zones = listOf(ZoneEntry("Asia/Kolkata")); demoEnabled = true }
+        val c = CalendarController(listOf(DemoProvider({ zone }, latencyMs = 0)), settings, CoroutineScope(Dispatchers.Unconfined), clock = { now })
+        runBlocking { c.reloadAccounts() }
+        c.ensureLoaded()
+        val day = LocalDate(2026, 11, 11)
+        val lunch = c.eventsBetween(day, LocalDate(2026, 11, 12)).first { it.title == "Lunch" }
+        c.openEditor(lunch)
+        c.updateDraft { it.copy(colorId = "11") }
+        c.saveEditor()
+        val saved = c.eventsBetween(day, LocalDate(2026, 11, 12)).first { it.title == "Lunch" }
+        assertEquals(0xFFD50000L, c.colorOf(saved))
+    }
+
+    @Test
+    fun zoomIsClampedAndRemembered() {
+        val store = InMemoryStore()
+        val c = CalendarController(emptyList(), AppSettings(store), CoroutineScope(Dispatchers.Unconfined), clock = { now })
+        assertEquals(48f, c.hourHeightFor(compact = false))
+        assertEquals(52f, c.hourHeightFor(compact = true))
+        c.zoomBy(2f, compact = false)
+        assertEquals(96f, c.hourHeightFor(compact = false))
+        assertEquals(96f, AppSettings(store).hourHeight)
+        c.zoomBy(100f, compact = false)
+        assertEquals(CalendarController.MAX_HOUR_HEIGHT, c.hourHeight)
+        c.zoomBy(0.001f, compact = false)
+        assertEquals(CalendarController.MIN_HOUR_HEIGHT, c.hourHeight)
+        c.resetZoom()
+        assertNull(AppSettings(store).hourHeight)
+    }
+
+    @Test
+    fun demoDataTurnsOffOnceAGoogleAccountIsConnected() {
+        val settings = AppSettings(InMemoryStore()).apply { demoEnabled = true }
+        val c = CalendarController(listOf(FakeGoogle(zone), DemoProvider({ zone }, latencyMs = 0)), settings, CoroutineScope(Dispatchers.Unconfined), clock = { now })
+        assertTrue(c.hasRealAccount())
+        assertFalse(c.demoEnabled)
+        assertFalse(settings.demoEnabled)
+        // Without a real account, demo stays as chosen.
+        val s2 = AppSettings(InMemoryStore()).apply { demoEnabled = true }
+        val c2 = CalendarController(listOf(DemoProvider({ zone }, latencyMs = 0)), s2, CoroutineScope(Dispatchers.Unconfined), clock = { now })
+        assertTrue(c2.demoEnabled)
     }
 }
